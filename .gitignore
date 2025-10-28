@@ -5,6 +5,9 @@
 /bin/
 /lib/
 
+# Cache files
+.cache/**
+
 # CMake files
 CMakeFiles/
 CMakeCache.txt
