@@ -1,0 +1,40 @@
+# Build output
+/build/
+/build-*/
+/out/
+/bin/
+/lib/
+
+# CMake files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# CLion / JetBrains
+.idea/
+cmake-build-*/
+
+# MacOS Finder crap
+.DS_Store
+
+# Compiler / Debug stuff
+*.o
+*.obj
+*.a
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+*.pdb
+*.ilk
+*.log
+
+# Other temporary files
+*.tmp
+*.swp
