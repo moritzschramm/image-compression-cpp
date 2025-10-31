@@ -5,6 +5,9 @@
 /bin/
 /lib/
 
+# Dataset
+/dataset/
+
 # Cache files
 .cache/**
 
