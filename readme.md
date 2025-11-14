@@ -4,15 +4,8 @@
 Download the benchmark dataset from [https://qoiformat.org/benchmark/](https://qoiformat.org/benchmark/).
 Put the contents in a new directory called `/dataset`.
 
-### libpng
-This project uses `libpng`. To install on Linux:
-```
-sudo apt install libpng-dev
-```
-or on MacOS with `homebrew`:
-```
-brew install libpng
-```
+### OpenCV
+This project uses `opencv` Version 4.12.0
 
 ## Build
 ```
