@@ -4,8 +4,9 @@
 Download the benchmark dataset from [https://qoiformat.org/benchmark/](https://qoiformat.org/benchmark/).
 Put the contents in a new directory called `/dataset`.
 
-### OpenCV
-This project uses `opencv` Version 4.12.0
+#### Libraries
+ - `opencv` (4.12.0)
+ - `libtorch` (2.9.1)
 
 ## Build
 ```
