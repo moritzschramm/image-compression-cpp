@@ -1,5 +1,6 @@
 #include <iostream>
 #include <string>
+#include <torch/torch.h>
 #include "image_loader.hpp"
 
 
@@ -8,6 +9,12 @@ const std::string DATASET_DIR = "../dataset";
 const std::string IMAGE_FORMAT = "png";
 
 int main() {
+
+    torch::Tensor t = torch::rand({3, 3});
+    std::cout << "Tensor:\n" << t << "\n";
+
+    auto t2 = torch::relu(t);
+    std::cout << "ReLU:\n" << t2 << "\n";
 
     auto paths = find_image_files_recursively(DATASET_DIR, IMAGE_FORMAT);
 
