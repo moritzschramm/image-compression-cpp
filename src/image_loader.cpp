@@ -1,19 +1,19 @@
 #include <algorithm>
 #include <iostream>
 #include <string>
-#include "image_loader.hpp"
+#include "image_loader.h"
 
 namespace fs = std::filesystem;
 
-std::string to_lower(std::string s) {
+std::string to_lower(std::string s)
+{
     std::transform(s.begin(), s.end(), s.begin(),
-        [](unsigned char c) {
-            return std::tolower(c);
-        });
+        [](unsigned char c) { return std::tolower(c); });
     return s;
 }
 
-std::vector<fs::path> find_image_files_recursively(const fs::path& dir, const std::string& image_format) {
+std::vector<fs::path> find_image_files_recursively(const fs::path& dir, const std::string& image_format)
+{
     std::vector<fs::path> image_files;
 
     if(!fs::exists(dir) || !fs::is_directory(dir)) {
@@ -32,8 +32,8 @@ std::vector<fs::path> find_image_files_recursively(const fs::path& dir, const st
     return image_files;
 }
 
-cv::Mat load_image(const fs::path& path) {
-
+cv::Mat load_image(const fs::path& path)
+{
     cv::Mat img = cv::imread(path, cv::IMREAD_UNCHANGED);
     if (img.empty()) {
         std::cerr << "Error: Could not load image" << std::endl;
