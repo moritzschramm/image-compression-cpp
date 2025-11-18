@@ -6,7 +6,7 @@
 
 
 // change this so that the given directory is relative to the directory you are in while executing the program
-const std::string DATASET_DIR = "../dataset";
+const std::string DATASET_DIR = "./dataset";
 const std::string IMAGE_FORMAT = "png";
 
 int main()

@@ -11,13 +11,11 @@ Put the contents in a new directory called `/dataset`.
 ## Build
 ```
 mkdir build
-cd build
-cmake ..
-cmake --build .
+cmake -B build -S .
+cmake --build build -j
 ```
 
 ## Execute
 ```
-cd build
-./image_compression
+./build/image_compression
 ```
