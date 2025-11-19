@@ -19,6 +19,7 @@ find_package(OpenCV REQUIRED)
 add_executable(image_compression
     src/main.cpp
     src/image_loader.cpp
+    src/image_slicer.cpp
 )
 
 target_link_libraries(image_compression PRIVATE
