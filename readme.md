@@ -19,5 +19,6 @@ cmake --build build -j
 
 ## Execute
 ```
-./build/image_compression
+./build/compress
+./build/reassemble
 ```

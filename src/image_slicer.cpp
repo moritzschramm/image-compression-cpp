@@ -1,75 +1,11 @@
 #include "image_slicer.h"
+#include <thread>
+#include <future>
+#include <mutex>
 #include <opencv2/imgcodecs.hpp>
 
-void write_metadata_binary(const std::vector<SliceMetadata>& metadata, const std::string& path)
-{
-    std::ofstream f(path, std::ios::binary);
+#include "metadata.h"
 
-    // write header
-    SliceRecordHeader header;
-    header.magic = 0x534C4943; // "SLIC"
-    header.count = metadata.size();
-
-    f.write(reinterpret_cast<const char*>(&header), sizeof(header));
-
-    // write each record
-    for (const auto& m : metadata) {
-        SliceRecordFixed fixed;
-        fixed.label  = m.label;
-        fixed.x      = m.x;
-        fixed.y      = m.y;
-        fixed.width  = m.width;
-        fixed.height = m.height;
-        fixed.filename_len = m.filename.size();
-
-        // write fixed part
-        f.write(reinterpret_cast<const char*>(&fixed), sizeof(fixed));
-
-        // write filename bytes
-        f.write(m.filename.data(), m.filename.size());
-    }
-}
-
-std::vector<SliceMetadata> read_metadata_binary(const std::string& path)
-{
-    std::ifstream f(path, std::ios::binary);
-    if (!f)
-        throw std::runtime_error("Cannot open metadata file");
-
-    // read header
-    SliceRecordHeader header;
-    f.read(reinterpret_cast<char*>(&header), sizeof(header));
-
-    if (header.magic != 0x534C4943)
-        throw std::runtime_error("Invalid metadata file (magic mismatch)");
-
-    std::vector<SliceMetadata> meta;
-    meta.reserve(header.count);
-
-    // read records
-    for (uint32_t i = 0; i < header.count; ++i) {
-
-        SliceRecordFixed fixed;
-        f.read(reinterpret_cast<char*>(&fixed), sizeof(fixed));
-
-        SliceMetadata m;
-        m.label = fixed.label;
-        m.x = fixed.x;
-        m.y = fixed.y;
-        m.width = fixed.width;
-        m.height = fixed.height;
-
-        // read filename bytes
-        std::string filename(fixed.filename_len, '\0');
-        f.read(&filename[0], fixed.filename_len);
-
-        m.filename = std::move(filename);
-
-        meta.push_back(m);
-    }
-
-    return meta;
-}
 
 /*
  * compute the bounding box of a given binary mask
@@ -127,6 +63,11 @@ cv::Mat slice_image(const cv::Mat& input, const torch::Tensor& mask, int label, 
 
     cropped.copyTo(output, cropped_mask);
 
+    out_box.x = box.x;
+    out_box.y = box.y;
+    out_box.width = box.width;
+    out_box.height = box.height;
+
     return output;
 }
 
@@ -181,7 +122,7 @@ bool write_slices(const cv::Mat& input, const torch::Tensor& mask,
     for (auto& f : futures) f.get();
 
     // write metadata
-    write_metadata_binary(metadata, dir / "metadata.bin");
+    write_metadata_binary(metadata, dir / "metadata.bin", input.cols, input.rows);
 
     return success;
 }

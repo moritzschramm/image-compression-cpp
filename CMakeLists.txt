@@ -16,17 +16,37 @@ message(STATUS "Using TORCH_DIR = ${TORCH_DIR}")
 find_package(Torch REQUIRED)
 find_package(OpenCV REQUIRED)
 
-add_executable(image_compression
-    src/main.cpp
+include_directories(${OpenCV_INCLUDE_DIRS})
+
+####################
+# compression
+####################
+add_executable(compress
+    src/compress.cpp
+    src/metadata.cpp
     src/image_loader.cpp
     src/image_slicer.cpp
 )
-
-target_link_libraries(image_compression PRIVATE
+target_link_libraries(compress PRIVATE
     ${OpenCV_LIBS}
     ${TORCH_LIBRARIES}
 )
+target_include_directories(compress PRIVATE
+    include
+)
+set_property(TARGET compress PROPERTY CXX_STANDARD 17)
 
-target_include_directories(image_compression PRIVATE include)
-
-set_property(TARGET image_compression PROPERTY CXX_STANDARD 17)
+####################
+# reassembler
+####################
+add_executable(reassemble
+    src/reassemble.cpp
+    src/metadata.cpp
+    src/image_loader.cpp
+)
+target_link_libraries(reassemble PRIVATE
+    ${OpenCV_LIBS}
+)
+target_include_directories(reassemble PRIVATE
+    include
+)
