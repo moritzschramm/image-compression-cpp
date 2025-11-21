@@ -19,7 +19,7 @@ find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})
 
 ####################
-# compression
+# compress
 ####################
 add_executable(compress
     src/compress.cpp
@@ -37,7 +37,7 @@ target_include_directories(compress PRIVATE
 set_property(TARGET compress PROPERTY CXX_STANDARD 17)
 
 ####################
-# reassembler
+# reassemble
 ####################
 add_executable(reassemble
     src/reassemble.cpp
@@ -52,14 +52,29 @@ target_include_directories(reassemble PRIVATE
 )
 
 ####################
-# neural network
+# pretraining
 ####################
-add_executable(neural_network
-    src/fcn/main.cpp
+add_executable(pretraining
+    src/fcn/pretraining.cpp
 )
-target_link_libraries(neural_network PRIVATE
+target_link_libraries(pretraining PRIVATE
+    ${OpenCV_LIBS}
     ${TORCH_LIBRARIES}
 )
-target_include_directories(neural_network PRIVATE
+target_include_directories(pretrainig PRIVATE
+    include
+)
+
+####################
+# pretraining
+####################
+add_executable(pretraining
+    src/fcn/pretraining.cpp
+)
+target_link_libraries(pretraining PRIVATE
+    ${OpenCV_LIBS}
+    ${TORCH_LIBRARIES}
+)
+target_include_directories(pretrainig PRIVATE
     include
 )

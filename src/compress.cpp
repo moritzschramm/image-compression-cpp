@@ -57,6 +57,8 @@ int main()
 {
     auto paths = find_image_files_recursively(DATASET_DIR, IMAGE_FORMAT);
 
+    std::cout << "Found " << std::to_string(paths.size()) << " images" << std::endl;
+
     for(const auto& path : paths)
     {
         std::cout << path << std::endl;
