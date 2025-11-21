@@ -50,3 +50,16 @@ target_link_libraries(reassemble PRIVATE
 target_include_directories(reassemble PRIVATE
     include
 )
+
+####################
+# neural network
+####################
+add_executable(neural_network
+    src/fcn/main.cpp
+)
+target_link_libraries(neural_network PRIVATE
+    ${TORCH_LIBRARIES}
+)
+target_include_directories(neural_network PRIVATE
+    include
+)
