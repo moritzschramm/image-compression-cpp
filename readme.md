@@ -4,6 +4,8 @@ Use DL to predict weights for Multicut to segment image into well compressable i
 Position in original image is stored as well, so reassembly to original image is possible.
 
 ## Setup and Dependencies
+Execute `./setup.sh`.
+
 Download the benchmark dataset from [https://qoiformat.org/benchmark/](https://qoiformat.org/benchmark/).
 Put the contents in a new directory called `/dataset`.
 
@@ -15,9 +17,7 @@ Create a directory called `/results`.
 
 ## Build
 ```
-mkdir build
-cmake -B build -S .
-cmake --build build -j
+./build.sh
 ```
 
 ## Execute
