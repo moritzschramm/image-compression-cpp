@@ -4,8 +4,8 @@
 #include "fcn/EdgeDatset.h"
 #include "fcn/EdgeUNet.h"
 
-int main() {
-
+int main()
+{
     auto image_paths = find_image_files_recursively(DATASET_DIR, IMAGE_FORMAT);
     std::vector<std::string> train_targets; // TODO
 

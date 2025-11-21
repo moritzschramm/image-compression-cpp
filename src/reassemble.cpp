@@ -10,7 +10,8 @@
 
 // ensure a mat has 4 channels (RGBA). If input has 3 channels => add opaque alpha
 // if 1 channel => duplicate to RGB and add alpha
-cv::Mat ensure_rgba(const cv::Mat& src) {
+cv::Mat ensure_rgba(const cv::Mat& src)
+{
     cv::Mat dst;
     if (src.channels() == 4) {
         dst = src.clone();
@@ -24,7 +25,8 @@ cv::Mat ensure_rgba(const cv::Mat& src) {
     return dst;
 }
 
-int main() {
+int main()
+{
 
     std::string meta_path = "metadata.bin";
     std::string out_path = "reconstructed.png";

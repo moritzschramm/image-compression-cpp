@@ -4,7 +4,8 @@
 #include "image_loader.h"
 #include "image_slicer.h"
 
-torch::Tensor make_triangle_mask(int H, int W) {
+torch::Tensor make_triangle_mask(int H, int W)
+{
     auto mask = torch::zeros({H, W}, torch::kInt64);
 
     for (int y = 0; y < H; y++) {
