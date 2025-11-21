@@ -30,8 +30,8 @@ cmake --build build -j
 
 ## Training
 
-In pre-trainig, the network learns the edge costs for multicut segmentation based on local neighbor differences. 
-The actual training uses the cumulative sum of the compressed slices image size as a loss.
+In pre-training, the network learns the edge costs for multicut segmentation based on local neighbor differences. 
+The actual training uses the cumulative sum of the compressed slices' image size as a loss.
 
 ## Multicut
 

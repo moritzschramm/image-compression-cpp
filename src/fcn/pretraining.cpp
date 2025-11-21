@@ -7,7 +7,7 @@
 int main() {
 
     auto image_paths = find_image_files_recursively(DATASET_DIR, IMAGE_FORMAT);
-    std::vector<std::string> train_targets;
+    std::vector<std::string> train_targets; // TODO
 
     auto train_dataset = EdgeDataset(image_paths, train_targets)
         .map(torch::data::transforms::Stack<>());
