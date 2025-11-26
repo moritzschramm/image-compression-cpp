@@ -56,12 +56,13 @@ target_include_directories(reassemble PRIVATE
 ####################
 add_executable(pretraining
     src/fcn/pretraining.cpp
+    src/image_loader.cpp
 )
 target_link_libraries(pretraining PRIVATE
     ${OpenCV_LIBS}
     ${TORCH_LIBRARIES}
 )
-target_include_directories(pretrainig PRIVATE
+target_include_directories(pretraining PRIVATE
     include
 )
 
@@ -69,12 +70,12 @@ target_include_directories(pretrainig PRIVATE
 # training
 ####################
 add_executable(training
-    src/fcn/pretraining.cpp
+    src/fcn/training.cpp
 )
 target_link_libraries(training PRIVATE
     ${OpenCV_LIBS}
     ${TORCH_LIBRARIES}
 )
-target_include_directories(trainig PRIVATE
+target_include_directories(training PRIVATE
     include
 )
