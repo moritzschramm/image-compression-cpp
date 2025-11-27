@@ -5,7 +5,6 @@
 #include "image_loader.h"
 #include "fcn/EdgeDatset.h"
 #include "fcn/EdgeUNet.h"
-#include "opencv2/opencv.hpp"
 
 void create_target(const std::filesystem::path& target_path, const std::filesystem::path& image_path)
 {
@@ -33,7 +32,7 @@ void create_target(const std::filesystem::path& target_path, const std::filesyst
     // max diff = sum over channels of max abs difference (255)
     const float max_raw_diff = 255.0f * image.channels();
 
-    torch::Tensor out = torch::zeros({4, H, W}, torch::TensorOptions().dtype(torch::kFloat32));
+    torch::Tensor out = torch::zeros({2, H, W}, torch::TensorOptions().dtype(torch::kFloat32));
     auto A = out.accessor<float, 3>();
 
     for (int y = 0; y < H; ++y)
@@ -62,14 +61,14 @@ void create_target(const std::filesystem::path& target_path, const std::filesyst
             // right
             if (x + 1 < W) A[0][y][x] = compute_cost(x+1, y);
 
-            // left
-            if (x - 1 >= 0) A[1][y][x] = compute_cost(x-1, y);
-
             // down
-            if (y + 1 < H) A[2][y][x] = compute_cost(x, y+1);
+            if (y + 1 < H) A[1][y][x] = compute_cost(x, y+1);
 
+            // for now, only use 2 output channels, so undirected edges
+            // left
+            //if (x - 1 >= 0) A[1][y][x] = compute_cost(x-1, y);
             // up
-            if (y - 1 >= 0) A[3][y][x] = compute_cost(x, y-1);
+            //if (y - 1 >= 0) A[3][y][x] = compute_cost(x, y-1);
         }
     }
 
@@ -112,13 +111,13 @@ int main()
     auto train_loader = torch::data::make_data_loader(
         std::move(train_dataset),
         torch::data::DataLoaderOptions()
-            .batch_size(2)
+            .batch_size(1)
             .workers(4)
     );
 
     std::cout << "Loaded pretraining data" << std::endl;
 
-    EdgeUNet model(/*in_channels=*/3, /*edge_channels=*/4);
+    EdgeUNet model(/*in_channels=*/4, /*edge_channels=*/2);
     model->to(torch::kCUDA);
 
     torch::optim::Adam optimizer(

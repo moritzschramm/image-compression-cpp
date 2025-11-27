@@ -10,7 +10,7 @@ struct EdgeUNetImpl : torch::nn::Module {
     Up up1{nullptr}, up2{nullptr};
     torch::nn::Conv2d outc{nullptr};
 
-    EdgeUNetImpl(int in_channels = 3, int edge_channels = 4)
+    EdgeUNetImpl(int in_channels = 4, int edge_channels = 2)
         : inc(in_channels, 64),
           down1(64, 128),
           down2(128, 256),
