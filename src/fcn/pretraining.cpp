@@ -102,6 +102,8 @@ std::vector<std::string> find_or_create_targets(const std::vector<std::filesyste
 
 int main()
 {
+    const auto device = torch::kCUDA;
+
     auto image_paths = find_image_files_recursively(DATASET_DIR, IMAGE_FORMAT);
     std::vector<std::string> train_targets = find_or_create_targets(image_paths);
 
@@ -118,7 +120,7 @@ int main()
     std::cout << "Loaded pretraining data" << std::endl;
 
     EdgeUNet model(/*in_channels=*/4, /*edge_channels=*/2);
-    model->to(torch::kCUDA);
+    model->to(device);
 
     torch::optim::Adam optimizer(
         model->parameters(),
@@ -135,8 +137,8 @@ int main()
         int batch_count = 0;
 
         for (auto& batch : *train_loader) {
-            auto imgs = batch.data.to(torch::kCUDA);
-            auto tgts = batch.target.to(torch::kCUDA);
+            auto imgs = batch.data.to(device);
+            auto tgts = batch.target.to(device);
 
             optimizer.zero_grad();
 
@@ -148,10 +150,14 @@ int main()
 
             total_loss += loss.item<float>();
             batch_count++;
-        }
 
-        std::cout << "Epoch " << epoch
-                  << " | Loss: " << (total_loss / batch_count)
-                  << std::endl;
+            std::cout << "Epoch [" << epoch << "/" << epochs
+                                  << "] Batch [" << batch_count
+                                  << "] Loss: " << loss.item<float>() << std::endl;
+        }
+        std::cout << "Epoch [" << epoch << "/" << epochs
+                              << "] Average Loss: " << (total_loss/batch_count) << std::endl;
     }
+
+    torch::save(model, "fcn_pretrained_" + std::to_string(std::time(0)) + ".pt");
 }
