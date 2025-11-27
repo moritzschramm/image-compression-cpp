@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(image_compression LANGUAGES CXX)
 
+add_subdirectory(external/RAMA)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -26,13 +28,17 @@ add_executable(compress
     src/metadata.cpp
     src/image_loader.cpp
     src/image_slicer.cpp
+    src/rama_wrapper.cpp
 )
 target_link_libraries(compress PRIVATE
     ${OpenCV_LIBS}
     ${TORCH_LIBRARIES}
+    rama_cuda
+    RAMA
 )
 target_include_directories(compress PRIVATE
     include
+    external/RAMA/include
 )
 set_property(TARGET compress PROPERTY CXX_STANDARD 17)
 
@@ -71,11 +77,15 @@ target_include_directories(pretraining PRIVATE
 ####################
 add_executable(training
     src/fcn/training.cpp
+    src/rama_wrapper.cpp
 )
 target_link_libraries(training PRIVATE
     ${OpenCV_LIBS}
     ${TORCH_LIBRARIES}
+    rama_cuda
+    RAMA
 )
 target_include_directories(training PRIVATE
     include
+    external/RAMA/include
 )

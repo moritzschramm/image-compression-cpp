@@ -119,7 +119,7 @@ int main()
 
     std::cout << "Loaded pretraining data" << std::endl;
 
-    EdgeUNet model(/*in_channels=*/4, /*edge_channels=*/2);
+    EdgeUNet model;
     model->to(device);
 
     torch::optim::Adam optimizer(
