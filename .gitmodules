@@ -1,0 +1,3 @@
+[submodule "external/RAMA"]
+	path = external/RAMA
+	url = https://github.com/pawelswoboda/RAMA
