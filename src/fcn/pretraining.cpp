@@ -84,7 +84,7 @@ void create_random_patterns()
 
     auto write_random_image = [&](size_t idx, std::function<cv::Mat(int,int)> random_pattern_generator, int w, int h) -> void {
 
-        auto target_path = CACHE_DIR / (std::to_string(idx) + ".png");
+        auto target_path = CACHE_DIR / "random_patterns" / (std::to_string(idx) + ".png");
 
         if (!std::filesystem::exists(target_path)) {
             cv::imwrite(target_path, random_pattern_generator(w, h));
@@ -128,6 +128,8 @@ std::vector<std::string> find_or_create_targets(const std::vector<std::filesyste
 int main()
 {
     const auto device = torch::kCUDA;
+
+    create_random_patterns();
 
     auto image_paths = find_image_files_recursively(DATASET_DIR, IMAGE_FORMAT);
     std::vector<std::string> train_targets = find_or_create_targets(image_paths);
