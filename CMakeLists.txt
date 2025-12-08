@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(image_compression LANGUAGES CXX)
+project(image_compression LANGUAGES CXX CUDA)
 
 add_subdirectory(external/RAMA)
 
@@ -63,6 +63,7 @@ target_include_directories(reassemble PRIVATE
 add_executable(pretraining
     src/fcn/pretraining.cpp
     src/image_loader.cpp
+    src/pattern_generator.cpp
 )
 target_link_libraries(pretraining PRIVATE
     ${OpenCV_LIBS}

@@ -4,6 +4,7 @@
 #include <mutex>
 #include <opencv2/imgcodecs.hpp>
 
+#include "configuration.h"
 #include "metadata.h"
 
 
@@ -103,7 +104,7 @@ bool write_slices(const cv::Mat& input, const torch::Tensor& mask,
             if (slice.empty()) return;
 
             std::string filename = "slice_" + std::to_string(label) + "." + extension;
-            success = cv::imwrite(dir / filename, slice) && success;
+            success = cv::imwrite(dir / filename, slice, {cv::IMWRITE_PNG_COMPRESSION, COMPRESSION_LEVEL}) && success;
 
             // store metadata
             SliceMetadata m;

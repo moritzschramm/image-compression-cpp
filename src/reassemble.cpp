@@ -1,3 +1,4 @@
+#include <opencv2/imgcodecs.hpp>
 #include <opencv2/opencv.hpp>
 
 #include <cstdint>
@@ -6,6 +7,7 @@
 #include <vector>
 #include <algorithm>
 
+#include "configuration.h"
 #include "metadata.h"
 
 // ensure a mat has 4 channels (RGBA). If input has 3 channels => add opaque alpha
@@ -112,7 +114,7 @@ int main()
         slice_roi.copyTo(canvas_roi, alpha_mask);
     }
 
-    if (!cv::imwrite(out_path, canvas)) {
+    if (!cv::imwrite(out_path, canvas, {cv::IMWRITE_PNG_COMPRESSION, COMPRESSION_LEVEL})) {
         std::cerr << "Failed to write reconstructed image to " << out_path << "\n";
         return 1;
     }

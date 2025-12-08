@@ -78,26 +78,33 @@ void create_target(const std::filesystem::path& target_path, const std::filesyst
 
 void create_random_patterns()
 {
-    if (!std::filesystem::exists(CACHE_DIR)) {
-        std::filesystem::create_directories(CACHE_DIR);
+    if (!std::filesystem::exists(CACHE_DIR / "random_patterns")) {
+        std::filesystem::create_directories(CACHE_DIR / "random_patterns");
     }
 
-    auto write_random_image = [&](size_t idx, std::function<cv::Mat(int,int)> random_pattern_generator, int w, int h) -> void {
+    auto write_random_image = [&](size_t idx, std::function<cv::Mat(int,int,bool)> random_pattern_generator, int w, int h, bool alpha) -> void {
 
         auto target_path = CACHE_DIR / "random_patterns" / (std::to_string(idx) + ".png");
 
         if (!std::filesystem::exists(target_path)) {
-            cv::imwrite(target_path, random_pattern_generator(w, h));
+            cv::imwrite(target_path, random_pattern_generator(w, h, alpha), {cv::IMWRITE_PNG_COMPRESSION, COMPRESSION_LEVEL});
+            std::cout << "created random pattern " << target_path << std::endl;
         }
     };
 
     int w = 1024, h = 1024;
     size_t idx = 0;
-    for (; idx < 100; idx++) write_random_image(idx, generate_repetition_pattern, w, h);
-    for (; idx < 200; idx++) write_random_image(idx, generate_monochrome_region, w, h);
-    for (; idx < 300; idx++) write_random_image(idx, generate_low_variance_noise, w, h);
-    for (; idx < 400; idx++) write_random_image(idx, generate_low_frequency_noise, w, h);
-    for (; idx < 500; idx++) write_random_image(idx, generate_random_row_copies, w, h);
+    size_t batch_size = 100;
+    for (; idx < batch_size; idx++) write_random_image(idx, generate_repetition_pattern, w, h, true);
+    for (; idx < batch_size*2; idx++) write_random_image(idx, generate_repetition_pattern, w, h, false);
+    for (; idx < batch_size*3; idx++) write_random_image(idx, generate_monochrome_region, w, h, true);
+    for (; idx < batch_size*4; idx++) write_random_image(idx, generate_monochrome_region, w, h, false);
+    for (; idx < batch_size*5; idx++) write_random_image(idx, generate_low_variance_noise, w, h, true);
+    for (; idx < batch_size*6; idx++) write_random_image(idx, generate_low_variance_noise, w, h, false);
+    for (; idx < batch_size*7; idx++) write_random_image(idx, generate_low_frequency_noise, w, h, true);
+    for (; idx < batch_size*8; idx++) write_random_image(idx, generate_low_frequency_noise, w, h, false);
+    for (; idx < batch_size*9; idx++) write_random_image(idx, generate_random_row_copies, w, h, true);
+    for (; idx < batch_size*10; idx++) write_random_image(idx, generate_random_row_copies, w, h, false);
 }
 
 std::vector<std::string> find_or_create_targets(const std::vector<std::filesystem::path>& image_paths)
@@ -127,7 +134,7 @@ std::vector<std::string> find_or_create_targets(const std::vector<std::filesyste
 
 int main()
 {
-    const auto device = torch::kCUDA;
+    const auto device = torch::kCPU;//torch::kCUDA;
 
     create_random_patterns();
 
