@@ -3,6 +3,7 @@
 #include <vector>
 #include "configuration.h"
 #include "image_loader.h"
+#include "pattern_generator.h"
 #include "fcn/EdgeDatset.h"
 #include "fcn/EdgeUNet.h"
 
@@ -73,6 +74,30 @@ void create_target(const std::filesystem::path& target_path, const std::filesyst
     }
 
     torch::save(out, target_path);
+}
+
+void create_random_patterns()
+{
+    if (!std::filesystem::exists(CACHE_DIR)) {
+        std::filesystem::create_directories(CACHE_DIR);
+    }
+
+    auto write_random_image = [&](size_t idx, std::function<cv::Mat(int,int)> random_pattern_generator, int w, int h) -> void {
+
+        auto target_path = CACHE_DIR / (std::to_string(idx) + ".png");
+
+        if (!std::filesystem::exists(target_path)) {
+            cv::imwrite(target_path, random_pattern_generator(w, h));
+        }
+    };
+
+    int w = 1024, h = 1024;
+    size_t idx = 0;
+    for (; idx < 100; idx++) write_random_image(idx, generate_repetition_pattern, w, h);
+    for (; idx < 200; idx++) write_random_image(idx, generate_monochrome_region, w, h);
+    for (; idx < 300; idx++) write_random_image(idx, generate_low_variance_noise, w, h);
+    for (; idx < 400; idx++) write_random_image(idx, generate_low_frequency_noise, w, h);
+    for (; idx < 500; idx++) write_random_image(idx, generate_random_row_copies, w, h);
 }
 
 std::vector<std::string> find_or_create_targets(const std::vector<std::filesystem::path>& image_paths)
