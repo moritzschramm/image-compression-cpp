@@ -1,5 +1,8 @@
 #include "pattern_generator.h"
 #include <algorithm>
+#include <queue>
+#include <random>
+#include <opencv2/opencv.hpp>
 #include <opencv2/core/hal/interface.h>
 
 
@@ -181,4 +184,109 @@ cv::Mat generate_random_noise(int W, int H, bool alpha)
     }
 
     return img;
+}
+
+cv::Mat generate_random_partition(int H, int W, int numSegments)
+{
+    cv::Mat mask(H, W, CV_32S, cv::Scalar(-1));
+
+    std::mt19937 rng(std::random_device{}());
+    std::uniform_int_distribution<int> distW(0, W-1);
+    std::uniform_int_distribution<int> distH(0, H-1);
+
+    std::vector<cv::Point> seeds;
+    seeds.reserve(numSegments);
+
+    for (int i = 0; i < numSegments; i++)
+        seeds.emplace_back(distW(rng), distH(rng));
+
+    std::vector<std::queue<cv::Point>> queues(numSegments);
+    for (int i = 0; i < numSegments; i++)
+    {
+        queues[i].push(seeds[i]);
+        mask.at<int>(seeds[i].y, seeds[i].x) = i;
+    }
+
+    auto neighbors = [&](int y, int x) {
+        std::vector<cv::Point> nb;
+        if (y > 0)     nb.emplace_back(x, y-1);
+        if (y < H-1)   nb.emplace_back(x, y+1);
+        if (x > 0)     nb.emplace_back(x-1, y);
+        if (x < W-1)   nb.emplace_back(x+1, y);
+        return nb;
+    };
+
+    bool somethingFilled = true;
+
+    while (somethingFilled)
+    {
+        somethingFilled = false;
+
+        // random order of segment expansion
+        std::vector<int> order(numSegments);
+        std::iota(order.begin(), order.end(), 0);
+        std::shuffle(order.begin(), order.end(), rng);
+
+        for (int idx : order)
+        {
+            if (queues[idx].empty())
+                continue;
+
+            auto p = queues[idx].front();
+            queues[idx].pop();
+
+            auto nb = neighbors(p.y, p.x);
+            std::shuffle(nb.begin(), nb.end(), rng);
+
+            for (auto &q : nb)
+            {
+                int &cell = mask.at<int>(q.y, q.x);
+                if (cell == -1)
+                {
+                    cell = idx;
+                    queues[idx].push(q);
+                    somethingFilled = true;
+                }
+            }
+        }
+    }
+
+    return mask;
+}
+
+
+
+cv::Mat colorize_segmentation(const cv::Mat& mask)
+{
+    int H = mask.rows;
+    int W = mask.cols;
+
+    // Determine the maximum label
+    int maxLabel = 0;
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++)
+            maxLabel = std::max(maxLabel, mask.at<int>(y, x));
+
+    int numLabels = maxLabel + 1;
+
+    std::mt19937 rng(std::random_device{}());
+    std::uniform_int_distribution<int> dist(0, 255);
+
+    // Assign random colors to each label
+    std::vector<cv::Vec3b> colors(numLabels);
+    for (int i = 0; i < numLabels; i++)
+        colors[i] = cv::Vec3b(dist(rng), dist(rng), dist(rng));
+
+    // Create output image
+    cv::Mat out(H, W, CV_8UC3);
+    for (int y = 0; y < H; y++)
+    {
+        for (int x = 0; x < W; x++)
+        {
+            int label = mask.at<int>(y, x);
+            out.at<cv::Vec3b>(y, x) = colors[label];
+        }
+    }
+
+    return out;
 }

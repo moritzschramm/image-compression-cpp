@@ -14,3 +14,6 @@ cv::Mat generate_low_variance_noise(int w, int h, bool alpha = false);
 cv::Mat generate_low_frequency_noise(int w, int h, bool alpha = false);
 cv::Mat generate_random_row_copies(int w, int h, bool alpha = false);
 cv::Mat generate_random_noise(int w, int h, bool alpha = false);
+
+cv::Mat generate_random_partition(int H, int W, int numSegments);
+cv::Mat colorize_segmentation(const cv::Mat& mask);

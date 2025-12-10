@@ -136,6 +136,12 @@ int main()
 {
     const auto device = torch::kCPU;//torch::kCUDA;
 
+
+    auto mask = generate_random_partition(1024, 1024, 10);
+    auto img_ex = colorize_segmentation(mask);
+    cv::imwrite("segments_colored.png", img_ex);
+    std::cout << "created random mask" << std::endl;
+
     create_random_patterns();
 
     auto image_paths = find_image_files_recursively(DATASET_DIR, IMAGE_FORMAT);

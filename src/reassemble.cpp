@@ -27,19 +27,16 @@ cv::Mat ensure_rgba(const cv::Mat& src)
     return dst;
 }
 
-int main()
+bool reassemble(std::filesystem::path image_path, std::filesystem::path out_filename)
 {
-
-    std::string meta_path = "metadata.bin";
-    std::string out_path = "reconstructed.png";
-
+    std::string metadata_filename = "metadata.bin";
     uint32_t w, h;
     std::vector<SliceMetadata> meta;
     try {
-        meta = read_metadata_binary(meta_path, w, h);
+        meta = read_metadata_binary(image_path / metadata_filename, w, h);
     } catch (const std::exception& e) {
         std::cerr << "Error reading metadata: " << e.what() << std::endl;
-        return 1;
+        return false;
     }
 
     int width = w;
@@ -47,7 +44,7 @@ int main()
 
     if (meta.empty()) {
         std::cerr << "No slices in metadata" << std::endl;
-        return 1;
+        return false;
     }
 
     cv::Mat canvas(height, width, CV_8UC4, cv::Scalar(0,0,0,0));
@@ -114,11 +111,20 @@ int main()
         slice_roi.copyTo(canvas_roi, alpha_mask);
     }
 
-    if (!cv::imwrite(out_path, canvas, {cv::IMWRITE_PNG_COMPRESSION, COMPRESSION_LEVEL})) {
-        std::cerr << "Failed to write reconstructed image to " << out_path << "\n";
-        return 1;
+    if (!cv::imwrite(out_filename, canvas, {cv::IMWRITE_PNG_COMPRESSION, COMPRESSION_LEVEL})) {
+        std::cerr << "Failed to write reconstructed image to " << out_filename << "\n";
+        return false;
     }
 
-    std::cout << "Reconstructed image written to " << out_path << "\n";
+    return true;
+}
+
+int main()
+{
+    std::string out_image_filename = "reconstructed.png";
+
+    reassemble("./", out_image_filename);
+
+    std::cout << "Reconstructed image written to " << out_image_filename << "\n";
     return 0;
 }
