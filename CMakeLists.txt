@@ -28,7 +28,7 @@ add_executable(compress
     src/metadata.cpp
     src/image_loader.cpp
     src/image_slicer.cpp
-    src/rama_wrapper.cpp
+    src/rama_wrapper.cu
 )
 target_link_libraries(compress PRIVATE
     ${OpenCV_LIBS}
@@ -78,7 +78,7 @@ target_include_directories(pretraining PRIVATE
 ####################
 add_executable(training
     src/fcn/training.cpp
-    src/rama_wrapper.cpp
+    src/rama_wrapper.cu
 )
 target_link_libraries(training PRIVATE
     ${OpenCV_LIBS}
@@ -90,3 +90,6 @@ target_include_directories(training PRIVATE
     include
     external/RAMA/include
 )
+
+set_target_properties(compress  PROPERTIES CUDA_ARCHITECTURES 89)
+set_target_properties(training PROPERTIES CUDA_ARCHITECTURES 89)

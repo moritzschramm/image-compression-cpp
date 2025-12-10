@@ -1,5 +1,5 @@
-#include "rama_wrapper.h"
 #include <thrust/device_vector.h>
+#include "rama_wrapper.h"
 #include <vector>
 #include "rama_cuda.h"
 

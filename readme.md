@@ -14,6 +14,8 @@ Put the contents in a new directory called `/dataset`.
  - `libtorch` (2.9.1)
 
 ## Build
+NOTE: Right now the build only works with CUDA architecture 8.9 and CUDA Version 12.6. 
+Change CMakeLists.txt for different versions. 
 ```
 ./build.sh
 ```
