@@ -4,7 +4,7 @@ Use DL to predict weights for Multicut to segment image into well compressable i
 Position in original image is stored as well, so reassembly to original image is possible.
 
 ## Setup and Dependencies
-Execute `./setup.sh`.
+Execute `./setup.sh`. (Setup without CUDA: `cmake -B build -S . -DENABLE_CUDA=OFF`; many features won't work)
 
 Download the benchmark dataset from [https://qoiformat.org/benchmark/](https://qoiformat.org/benchmark/).
 Put the contents in a new directory called `/dataset`.
@@ -31,7 +31,7 @@ Change CMakeLists.txt for different versions.
 ## Training
 
 In pre-training, the network learns the edge costs for multicut segmentation based on local neighbor differences. 
-The actual training uses the cumulative sum of the compressed slices' image size as a loss.
+The actual training uses the cumulative sum of the compressed slices' image size as a reward for online reinforcement learning.
 
 ## Multicut
 

@@ -138,7 +138,7 @@ int main()
     const auto device = torch::kCPU;//torch::kCUDA;
 
 
-    auto mask = generate_random_partition(1024, 1024, 10);
+    auto mask = generate_random_partition(1024, 1024, 50);
     auto img_ex = colorize_segmentation(mask);
     write_image("segments_colored", img_ex);
     std::cout << "created random mask" << std::endl;

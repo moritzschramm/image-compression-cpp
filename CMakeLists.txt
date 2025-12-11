@@ -1,8 +1,15 @@
 cmake_minimum_required(VERSION 3.16)
-#project(image_compression LANGUAGES CXX CUDA)
-project(image_compression LANGUAGES CXX)
 
-#add_subdirectory(external/RAMA)
+####################
+# CUDA switch
+####################
+option(ENABLE_CUDA "Enable CUDA and RAMA" ON)
+
+if(ENABLE_CUDA)
+    project(image_compression LANGUAGES CXX CUDA)
+else()
+    project(image_compression LANGUAGES CXX)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,27 +29,53 @@ find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})
 
 ####################
+# RAMA only when CUDA enabled
+####################
+if(ENABLE_CUDA)
+    add_subdirectory(external/RAMA)
+endif()
+
+####################
 # compress
 ####################
+if(ENABLE_CUDA)
 add_executable(compress
     src/compress.cpp
     src/metadata.cpp
     src/image_loader.cpp
     src/image_writer.cpp
     src/image_slicer.cpp
-    #src/rama_wrapper.cu
+    src/rama_wrapper.cu
 )
 target_link_libraries(compress PRIVATE
     ${OpenCV_LIBS}
     ${TORCH_LIBRARIES}
-    #rama_cuda
-    #RAMA
+    rama_cuda
+    RAMA
 )
+else()
+add_executable(compress
+    src/compress.cpp
+    src/metadata.cpp
+    src/image_loader.cpp
+    src/image_writer.cpp
+    src/image_slicer.cpp
+    src/rama_wrapper.cu
+)
+target_link_libraries(compress PRIVATE
+    ${OpenCV_LIBS}
+    ${TORCH_LIBRARIES}
+)
+endif()
+
 target_include_directories(compress PRIVATE
     include
     external/RAMA/include
 )
-set_property(TARGET compress PROPERTY CXX_STANDARD 17)
+set_target_properties(compress PROPERTIES
+    CXX_STANDARD 17
+    CUDA_ARCHITECTURES 89
+)
 
 ####################
 # reassemble
@@ -80,20 +113,30 @@ target_include_directories(pretraining PRIVATE
 ####################
 # training
 ####################
+if(ENABLE_CUDA)
 add_executable(training
     src/fcn/training.cpp
-    #src/rama_wrapper.cu
+    src/rama_wrapper.cu
 )
 target_link_libraries(training PRIVATE
     ${OpenCV_LIBS}
     ${TORCH_LIBRARIES}
-    #rama_cuda
-    #RAMA
+    rama_cuda
+    RAMA
 )
+else()
+add_executable(training
+    src/fcn/training.cpp
+)
+target_link_libraries(training PRIVATE
+    ${OpenCV_LIBS}
+    ${TORCH_LIBRARIES}
+)
+endif()
 target_include_directories(training PRIVATE
     include
     external/RAMA/include
 )
-
-set_target_properties(compress  PROPERTIES CUDA_ARCHITECTURES 89)
-set_target_properties(training PROPERTIES CUDA_ARCHITECTURES 89)
+set_target_properties(training PROPERTIES
+    CUDA_ARCHITECTURES 89
+)
