@@ -3,6 +3,7 @@
 #include <vector>
 #include "configuration.h"
 #include "image_loader.h"
+#include "image_writer.h"
 #include "pattern_generator.h"
 #include "fcn/EdgeDatset.h"
 #include "fcn/EdgeUNet.h"
@@ -84,10 +85,10 @@ void create_random_patterns()
 
     auto write_random_image = [&](size_t idx, std::function<cv::Mat(int,int,bool)> random_pattern_generator, int w, int h, bool alpha) -> void {
 
-        auto target_path = CACHE_DIR / "random_patterns" / (std::to_string(idx) + ".png");
+        auto target_path = CACHE_DIR / "random_patterns" / std::to_string(idx);
 
         if (!std::filesystem::exists(target_path)) {
-            cv::imwrite(target_path, random_pattern_generator(w, h, alpha), {cv::IMWRITE_PNG_COMPRESSION, COMPRESSION_LEVEL});
+            write_image(target_path, random_pattern_generator(w, h, alpha));
             std::cout << "created random pattern " << target_path << std::endl;
         }
     };
@@ -139,7 +140,7 @@ int main()
 
     auto mask = generate_random_partition(1024, 1024, 10);
     auto img_ex = colorize_segmentation(mask);
-    cv::imwrite("segments_colored.png", img_ex);
+    write_image("segments_colored", img_ex);
     std::cout << "created random mask" << std::endl;
 
     create_random_patterns();

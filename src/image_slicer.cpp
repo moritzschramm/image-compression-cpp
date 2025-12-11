@@ -4,7 +4,7 @@
 #include <mutex>
 #include <opencv2/imgcodecs.hpp>
 
-#include "configuration.h"
+#include "image_writer.h"
 #include "metadata.h"
 
 
@@ -78,7 +78,7 @@ cv::Mat slice_image(const cv::Mat& input, const torch::Tensor& mask, int label, 
  * files will be written in output_path / file_directory_name / slice_X.<extension>
  */
 bool write_slices(const cv::Mat& input, const torch::Tensor& mask,
-    const std::filesystem::path& output_path, const std::filesystem::path& file_directory_name, const std::string& extension)
+    const std::filesystem::path& output_path, const std::filesystem::path& file_directory_name)
 {
     bool success = true;
     auto dir = (output_path / file_directory_name);
@@ -103,8 +103,8 @@ bool write_slices(const cv::Mat& input, const torch::Tensor& mask,
 
             if (slice.empty()) return;
 
-            std::string filename = "slice_" + std::to_string(label) + "." + extension;
-            success = cv::imwrite(dir / filename, slice, {cv::IMWRITE_PNG_COMPRESSION, COMPRESSION_LEVEL}) && success;
+            std::string filename = "slice_" + std::to_string(label);
+            success = write_image(dir / filename, slice) && success;
 
             // store metadata
             SliceMetadata m;

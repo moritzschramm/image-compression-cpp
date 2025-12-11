@@ -28,6 +28,7 @@ add_executable(compress
     src/compress.cpp
     src/metadata.cpp
     src/image_loader.cpp
+    src/image_writer.cpp
     src/image_slicer.cpp
     #src/rama_wrapper.cu
 )
@@ -50,6 +51,7 @@ add_executable(reassemble
     src/reassemble.cpp
     src/metadata.cpp
     src/image_loader.cpp
+    src/image_writer.cpp
 )
 target_link_libraries(reassemble PRIVATE
     ${OpenCV_LIBS}
@@ -64,6 +66,7 @@ target_include_directories(reassemble PRIVATE
 add_executable(pretraining
     src/fcn/pretraining.cpp
     src/image_loader.cpp
+    src/image_writer.cpp
     src/pattern_generator.cpp
 )
 target_link_libraries(pretraining PRIVATE

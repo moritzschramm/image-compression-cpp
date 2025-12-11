@@ -68,7 +68,7 @@ int main()
 
         torch::Tensor mask = make_triangle_mask(input.rows, input.cols);
 
-        write_slices(input, mask, RESULTS_DIR, path.stem(), IMAGE_FORMAT);
+        write_slices(input, mask, RESULTS_DIR, path.stem());
         break;
     }
 
