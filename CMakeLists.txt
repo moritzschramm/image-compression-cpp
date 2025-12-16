@@ -109,6 +109,7 @@ target_link_libraries(pretraining PRIVATE
 target_include_directories(pretraining PRIVATE
     include
 )
+target_compile_options(pretraining PRIVATE -O3)
 
 ####################
 # training
@@ -140,3 +141,4 @@ target_include_directories(training PRIVATE
 set_target_properties(training PROPERTIES
     CUDA_ARCHITECTURES 89
 )
+target_compile_options(training PRIVATE -O3)

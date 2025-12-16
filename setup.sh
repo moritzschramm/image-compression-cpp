@@ -10,5 +10,5 @@ sed -i '/add_subdirectory(test)/d' external/RAMA/CMakeLists.txt
 sed -i '/pybind11_add_module(rama_py rama_py.cu)/d' external/RAMA/src/CMakeLists.txt
 sed -i '/target_link_libraries(rama_py PRIVATE multicut_text_parser rama_cuda RAMA)/d' external/RAMA/src/CMakeLists.txt
 
-
+# setup without cuda: cmake -B build -S . -DENABLE_CUDA=OFF
 cmake -B build -S .
