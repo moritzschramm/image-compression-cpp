@@ -6,17 +6,12 @@ struct SampleOut {
     torch::Tensor w;       // [B,E]
     torch::Tensor logp;    // [B]
     torch::Tensor entropy; // [B]
-    torch::Tensor sigma;   // [B,E]
 };
 
 inline SampleOut sample_gaussian_policy(
     const torch::Tensor& mu,        // [B,E]
-    const torch::Tensor& raw_sigma, // [B,E]
-    double eps = 1e-6
+    const torch::Tensor& sigma,     // [B,E]
 ) {
-    // sigma = softplus(raw_sigma) + eps
-    auto sigma = torch::softplus(raw_sigma) + eps;
-
     // sample: w = mu + sigma * noise
     auto noise = torch::randn_like(mu);
     auto w = mu + sigma * noise;
@@ -34,5 +29,5 @@ inline SampleOut sample_gaussian_policy(
     auto ent_elem = 0.5 * (1.0 + log2pi) + torch::log(sigma);
     auto entropy = ent_elem.sum(/*dim=*/1);
 
-    return {w, logp, entropy, sigma};
+    return {w, logp, entropy};
 }

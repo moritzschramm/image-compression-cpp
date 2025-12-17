@@ -20,29 +20,33 @@ int main()
     EMABaseline baseline(0.99);
 
     const double entropy_coef = 1e-4;
-    const double eps = 1e-6;
 
     for (int step = 0; step < 1e5; ++step) {
-        // --- get batch ---
-        // image: [B,C,H,W] on device
-        torch::Tensor image = /* load batch */ torch::randn({4, 3, 256, 256}, device);
+        torch::Tensor image = /* TODO load batch */ torch::randn({4, 3, 256, 256}, device);
 
         // forward: mu, raw_sigma [B,E]
         auto out = model->forward(image);
-        torch::Tensor mu = out.first; // TODO
+        torch::Tensor raw_mu = out.first; // TODO
         torch::Tensor raw_sigma = out.second;
 
-        // sample weights + compute logp/entropy on GPU
-        auto samp = sample_gaussian_policy(mu, raw_sigma, eps);
+        const double mu_scale = 2.0;
+        const double sigma_min = 0.02;
+        const double sigma_scale = 0.3;
+        mu = mu_scale * torch::tanh(raw_mu);
+        sigma = sigma_min + sigma_scale * torch::softplus(raw_sigma);
+        sigma = torch::clamp(sigma, 0.02, 0.3);
 
-        // --- multicut + reward outside autograd ---
-        torch::Tensor rewards;
-        {
+        // sample weights + compute logp/entropy on GPU
+        auto samp = sample_gaussian_policy(mu, sigma);
+
+        // multicut + reward outside autograd
+        torch::Tensor rewards = torch::ones({4}, device);
+        /*{
             torch::NoGradGuard ng;
 
             auto segs = multicut_solve_batch(samp.w.detach());
             rewards = compute_rewards(segs);
-        }
+        }*/
 
         // baseline update
         auto b = baseline.update(rewards);

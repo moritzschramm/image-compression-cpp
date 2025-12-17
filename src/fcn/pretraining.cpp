@@ -5,10 +5,13 @@
 #include "image_loader.h"
 #include "image_writer.h"
 #include "pattern_generator.h"
-#include "fcn/EdgeDatset.h"
+//#include "fcn/EdgeDataset.h"
+#include "fcn/EdgeDataset2.h"
 #include "fcn/EdgeUNet.h"
 
-void create_target(const std::filesystem::path& target_path, const std::filesystem::path& image_path)
+#include "png_size_estimator.cuh"
+
+void create_target(const std::filesystem::path& target_path, const std::filesystem::path& image_path, float id)
 {
     cv::Mat image = load_image(image_path);
 
@@ -74,6 +77,9 @@ void create_target(const std::filesystem::path& target_path, const std::filesyst
         }
     }
 
+    //A[0][0][0] = id;
+    //std::cout << std::to_string(id) << " for file " << image_path << std::endl;
+
     torch::save(out, target_path);
 }
 
@@ -87,7 +93,7 @@ void create_random_patterns()
 
         auto target_path = CACHE_DIR / "random_patterns" / std::to_string(idx);
 
-        if (!std::filesystem::exists(target_path)) {
+        if (!std::filesystem::exists(target_path.replace_extension(IMAGE_FORMAT))) {
             write_image(target_path, random_pattern_generator(w, h, alpha));
             std::cout << "created random pattern " << target_path << std::endl;
         }
@@ -111,6 +117,7 @@ void create_random_patterns()
 std::vector<std::string> find_or_create_targets(const std::vector<std::filesystem::path>& image_paths)
 {
     std::vector<std::string> target_paths;
+    int i = 0;
     for (const auto& image_path : image_paths)
     {
         auto relative_path = image_path.lexically_relative(DATASET_DIR);
@@ -125,7 +132,7 @@ std::vector<std::string> find_or_create_targets(const std::vector<std::filesyste
 
         if (!std::filesystem::exists(target_path)) {
             std::filesystem::create_directories(target_path.parent_path());
-            create_target(target_path, image_path);
+            create_target(target_path, image_path, i++);
         }
 
         target_paths.push_back(target_path);
@@ -135,20 +142,25 @@ std::vector<std::string> find_or_create_targets(const std::vector<std::filesyste
 
 int main()
 {
-    const auto device = torch::kCPU;//torch::kCUDA;
+    const auto device = torch::kCUDA;
 
-
-    auto mask = generate_random_partition(1024, 1024, 50);
+    /*auto mask = generate_random_partition(1024, 1024, 50);
     auto img_ex = colorize_segmentation(mask);
     write_image("segments_colored", img_ex);
     std::cout << "created random mask" << std::endl;
 
-    create_random_patterns();
+    create_random_patterns();*/
 
     auto image_paths = find_image_files_recursively(DATASET_DIR, IMAGE_FORMAT);
-    std::vector<std::string> train_targets = find_or_create_targets(image_paths);
+    std::vector<cv::Mat> images;
 
-    auto train_dataset = EdgeDataset(image_paths, train_targets)
+    for(const auto& path : image_paths)
+    {
+        cv::Mat input = load_image(path);
+        images.push_back(input);
+    }
+
+    auto train_dataset = EdgeDataset(images)
         .map(torch::data::transforms::Stack<>());
 
     auto train_loader = torch::data::make_data_loader(
@@ -168,7 +180,7 @@ int main()
         torch::optim::AdamOptions(/*learning_rate=*/1e-3)
     );
 
-    torch::nn::L1Loss criterion;
+    torch::nn::SmoothL1Loss criterion(torch::nn::SmoothL1LossOptions().beta(0.1));
 
     int epochs = 50;
 
@@ -181,20 +193,31 @@ int main()
             auto imgs = batch.data.to(device);
             auto tgts = batch.target.to(device);
 
+            //int64_t sample_id = batch.target.index({0, 0, 0, 0}).to(torch::kCPU).item<int64_t>();
+            //std::cout << "id: " << sample_id << std::endl;
+
             optimizer.zero_grad();
 
             auto outputs = model->forward(imgs);
 
-            auto loss = criterion(outputs, tgts);
+            auto pred_sel = torch::stack(
+                { outputs.index({torch::indexing::Slice(), 0, torch::indexing::Slice(), torch::indexing::Slice()}),
+                outputs.index({torch::indexing::Slice(), 2, torch::indexing::Slice(), torch::indexing::Slice()}) });
+
+            auto target_sel = torch::stack(
+                { tgts.index({torch::indexing::Slice(), 0, torch::indexing::Slice(), torch::indexing::Slice()}),
+                tgts.index({torch::indexing::Slice(), 2, torch::indexing::Slice(), torch::indexing::Slice()}) });
+
+            auto loss = criterion(pred_sel, target_sel);
             loss.backward();
             optimizer.step();
 
             total_loss += loss.item<float>();
             batch_count++;
 
-            std::cout << "Epoch [" << epoch << "/" << epochs
+            /*std::cout << "Epoch [" << epoch << "/" << epochs
                                   << "] Batch [" << batch_count
-                                  << "] Loss: " << loss.item<float>() << std::endl;
+                                  << "] Loss: " << loss.item<float>() << std::endl;*/
         }
         std::cout << "Epoch [" << epoch << "/" << epochs
                               << "] Average Loss: " << (total_loss/batch_count) << std::endl;

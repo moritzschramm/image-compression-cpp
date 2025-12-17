@@ -6,17 +6,7 @@
 #include <stdexcept>
 #include <iostream>
 
-#define CUDA_CHECK(expr)                                     \
-    do {                                                     \
-        cudaError_t err = (expr);                            \
-        if (err != cudaSuccess) {                            \
-            std::fprintf(stderr,                             \
-                         "CUDA error %s at %s:%d\n",         \
-                         cudaGetErrorString(err),            \
-                         __FILE__, __LINE__);                \
-            std::exit(EXIT_FAILURE);                         \
-        }                                                    \
-    } while (0)
+
 
 uint8_t* move_img_to_gpu(const cv::Mat& image)
 {
@@ -223,11 +213,11 @@ double estimate_png_size_from_device_image(
     int width,
     int height,
     int channels,
-    int L_min = 4,
-    float beta = 0.3f,
-    float b_match_token = 18.0f,
-    float gamma = 0.1f,
-    double overhead_base = 300.0)
+    int L_min,
+    float beta,
+    float b_match_token,
+    float gamma,
+    double overhead_base)
 {
     if (width <= 0 || height <= 0 || channels <= 0) {
         throw std::runtime_error("Invalid image dimensions/channels");
@@ -360,27 +350,6 @@ double estimate_png_size_from_device_image(
     return S_est;
 }
 
-// example host-side usage stub (expects img_dev already filled).
-void run_example()
-{
-    // dummy 512x512 RGBA filled with zeros
-    int width = 512;
-    int height = 512;
-    int channels = 4;
-    size_t N = static_cast<size_t>(width) * height * channels;
-
-    uint8_t* img_dev = nullptr;
-    CUDA_CHECK(cudaMalloc(&img_dev, N));
-    CUDA_CHECK(cudaMemset(img_dev, 0, N)); // black image
-
-    double est_size = estimate_png_size_from_device_image(img_dev, width, height, channels);
-
-    std::cout << "Estimated PNG size: " << est_size << " bytes" << std::endl;
-
-    CUDA_CHECK(cudaFree(img_dev));
-    return 0;
-}
-
 // copy pitched to packed device buffer
 __global__ void copy_pitched_to_packed(
     const uint8_t* src,
@@ -442,4 +411,24 @@ double estimate_png_size_from_GpuMat(
 
     cudaFree(packed_dev);
     return result;
+}
+
+// example host-side usage stub (expects img_dev already filled).
+void run_example()
+{
+    // dummy 512x512 RGBA filled with zeros
+    int width = 512;
+    int height = 512;
+    int channels = 4;
+    size_t N = static_cast<size_t>(width) * height * channels;
+
+    uint8_t* img_dev = nullptr;
+    CUDA_CHECK(cudaMalloc(&img_dev, N));
+    CUDA_CHECK(cudaMemset(img_dev, 0, N)); // black image
+
+    double est_size = estimate_png_size_from_device_image(img_dev, width, height, channels);
+
+    std::cout << "Estimated PNG size: " << est_size << " bytes" << std::endl;
+
+    CUDA_CHECK(cudaFree(img_dev));
 }
