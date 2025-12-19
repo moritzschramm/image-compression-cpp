@@ -2,8 +2,11 @@
 #include <algorithm>
 #include <queue>
 #include <random>
+#include <filesystem>
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/hal/interface.h>
+#include "configuration.h"
+#include "image_writer.h"
 
 void create_random_patterns()
 {

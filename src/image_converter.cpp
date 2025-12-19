@@ -1,8 +1,6 @@
 #include <thread>
-#include <future>
 #include <atomic>
 #include <opencv2/opencv.hpp>
-#include <filesystem>
 
 #include "configuration.h"
 #include "image_loader.h"
@@ -42,7 +40,6 @@ int main()
     }
 
     for (auto& t : workers) t.join();
-
 
     return 0;
 }
