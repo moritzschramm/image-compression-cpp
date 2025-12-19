@@ -10,7 +10,7 @@ struct SampleOut {
 
 inline SampleOut sample_gaussian_policy(
     const torch::Tensor& mu,        // [B,E]
-    const torch::Tensor& sigma,     // [B,E]
+    const torch::Tensor& sigma      // [B,E]
 ) {
     // sample: w = mu + sigma * noise
     auto noise = torch::randn_like(mu);

@@ -1,5 +1,6 @@
 #include <thread>
 #include <future>
+#include <atomic>
 #include <opencv2/opencv.hpp>
 #include <filesystem>
 
@@ -18,22 +19,30 @@ int main()
 {
     auto image_paths = find_image_files_recursively(DATASET_DIR, SOURCE_FORMAT);
 
-    unsigned num_threads = std::max(1u, std::thread::hardware_concurrency());
-    std::vector<std::future<void>> futures;
+    std::atomic<size_t> index{0};
+    const size_t N = image_paths.size();
+    const unsigned num_threads = std::min(8u, std::thread::hardware_concurrency());
 
-    for(auto image_path : image_paths)
-    {
-        futures.push_back(std::async(std::launch::async, [&, image_path]() {
+    std::vector<std::thread> workers;
 
-            auto image = load_image(image_path);
+    for (unsigned t = 0; t < num_threads; ++t) {
+        workers.emplace_back([&]() {
+            while (true) {
+                size_t i = index.fetch_add(1);
+                if (i >= N) break;
 
-            cv::resize(image, image, cv::Size(WIDTH, HEIGHT));
+                const auto& image_path = image_paths[i];
 
-            write_image(image_path, image);
-        }));
+                auto image = load_image(image_path);
+
+                cv::resize(image, image, cv::Size(WIDTH, HEIGHT));
+                write_image(image_path, image);
+            }
+        });
     }
 
-    for (auto& f : futures) f.get();
+    for (auto& t : workers) t.join();
+
 
     return 0;
 }

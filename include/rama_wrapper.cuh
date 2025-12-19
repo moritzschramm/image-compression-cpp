@@ -7,8 +7,7 @@
 #define CHECK_INPUT(x) CHECK_CUDA(x); CHECK_CONTIGUOUS(x)
 
 
-std::vector<torch::Tensor> rama_torch(
+torch::Tensor rama_torch(
     const torch::Tensor& _i,
     const torch::Tensor& _j,
-    const torch::Tensor& _costs,
-	const multicut_solver_options& opts);
+    const torch::Tensor& _costs);

@@ -5,6 +5,36 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/hal/interface.h>
 
+void create_random_patterns()
+{
+    if (!std::filesystem::exists(CACHE_DIR / "random_patterns")) {
+        std::filesystem::create_directories(CACHE_DIR / "random_patterns");
+    }
+
+    auto write_random_image = [&](size_t idx, std::function<cv::Mat(int,int,bool)> random_pattern_generator, int w, int h, bool alpha) -> void {
+
+        auto target_path = CACHE_DIR / "random_patterns" / std::to_string(idx);
+
+        if (!std::filesystem::exists(target_path.replace_extension(IMAGE_FORMAT))) {
+            write_image(target_path, random_pattern_generator(w, h, alpha));
+            std::cout << "created random pattern " << target_path << std::endl;
+        }
+    };
+
+    int w = 1024, h = 1024;
+    size_t idx = 0;
+    size_t batch_size = 100;
+    for (; idx < batch_size; idx++) write_random_image(idx, generate_repetition_pattern, w, h, true);
+    for (; idx < batch_size*2; idx++) write_random_image(idx, generate_repetition_pattern, w, h, false);
+    for (; idx < batch_size*3; idx++) write_random_image(idx, generate_monochrome_region, w, h, true);
+    for (; idx < batch_size*4; idx++) write_random_image(idx, generate_monochrome_region, w, h, false);
+    for (; idx < batch_size*5; idx++) write_random_image(idx, generate_low_variance_noise, w, h, true);
+    for (; idx < batch_size*6; idx++) write_random_image(idx, generate_low_variance_noise, w, h, false);
+    for (; idx < batch_size*7; idx++) write_random_image(idx, generate_low_frequency_noise, w, h, true);
+    for (; idx < batch_size*8; idx++) write_random_image(idx, generate_low_frequency_noise, w, h, false);
+    for (; idx < batch_size*9; idx++) write_random_image(idx, generate_random_row_copies, w, h, true);
+    for (; idx < batch_size*10; idx++) write_random_image(idx, generate_random_row_copies, w, h, false);
+}
 
 cv::Mat generate_repetition_pattern(int W, int H, bool alpha)
 {

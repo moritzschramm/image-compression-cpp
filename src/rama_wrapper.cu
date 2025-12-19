@@ -1,14 +1,14 @@
 #include <thrust/device_vector.h>
-#include "rama_wrapper.h"
+#include "rama_wrapper.cuh"
 #include <vector>
 #include "rama_cuda.h"
+#include "multicut_solver_options.h"
 
 
-std::vector<torch::Tensor> rama_torch(
+torch::Tensor rama_torch(
     const torch::Tensor& _i,
     const torch::Tensor& _j,
-    const torch::Tensor& _costs,
-	const multicut_solver_options& opts)
+    const torch::Tensor& _costs)
 {
 	CHECK_INPUT(_i);
 	CHECK_INPUT(_j);
@@ -21,6 +21,9 @@ std::vector<torch::Tensor> rama_torch(
     TORCH_CHECK(_i.dim() == 1, "i should be one-dimensional");
     TORCH_CHECK(_j.dim() == 1, "j should be one-dimensional");
     TORCH_CHECK(_costs.dim() == 1, "costs should be one-dimensional");
+
+	multicut_solver_options opts;
+	opts.verbose = false;
 
 	thrust::device_vector<int> i(_i.data_ptr<int32_t>(), _i.data_ptr<int32_t>() + _i.size(0));
 	thrust::device_vector<int> j(_j.data_ptr<int32_t>(), _j.data_ptr<int32_t>() + _j.size(0));
@@ -36,8 +39,9 @@ std::vector<torch::Tensor> rama_torch(
 	torch::Tensor node_mapping_torch = at::empty({long(node_mapping.size())}, _i.options());
     thrust::copy(node_mapping.begin(), node_mapping.end(), node_mapping_torch.data_ptr<int32_t>());
 
-	torch::Tensor lb_torch = at::empty({1}, _i.options());
+	/*torch::Tensor lb_torch = at::empty({1}, _i.options());
 	lb_torch.toType(torch::kFloat64);
-	lb_torch.fill_(lb);
-	return {node_mapping_torch, lb_torch};
+	lb_torch.fill_(lb);*/
+
+	return node_mapping_torch;
 }
