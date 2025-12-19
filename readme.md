@@ -6,7 +6,7 @@ Position in original image is stored as well, so reassembly to original image is
 ## Setup and Dependencies
 Execute `./setup.sh`. This creates the necessary directories, fetches and patches dependencies. 
 
-Download the dataset from [https://www.kaggle.com/competitions/imagenet-object-localization-challenge/data?select=ILSVRC](ImageNet via kaggle).
+Download the dataset from [https://www.kaggle.com/competitions/imagenet-object-localization-challenge/data](ImageNet via kaggle).
 Put the contents in a new directory called `/dataset`.
 
 #### Libraries
