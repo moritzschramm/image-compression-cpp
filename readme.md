@@ -1,12 +1,12 @@
 # Image Compression with Multicut
 
-Use DL to predict weights for Multicut to segment image into well compressable image slices.
+Use DL and RL to predict weights for Multicut to segment image into well compressable image slices.
 Position in original image is stored as well, so reassembly to original image is possible.
 
 ## Setup and Dependencies
 Execute `./setup.sh`. This creates the necessary directories, fetches and patches dependencies. 
 
-Download the benchmark dataset from [https://qoiformat.org/benchmark/](https://qoiformat.org/benchmark/).
+Download the dataset from [https://www.kaggle.com/competitions/imagenet-object-localization-challenge/data?select=ILSVRC](ImageNet via kaggle).
 Put the contents in a new directory called `/dataset`.
 
 #### Libraries
@@ -20,10 +20,13 @@ Change CMakeLists.txt for different versions.
 ./build.sh
 ```
 
+or build only single targets: `./build.sh <target>`, e.g. `./build.sh image_converter`
+
 ## Execute
 ```
 ./build/compress
 ./build/reassemble
+./build/image_converter
 ./build/pretraining
 ./build/training
 ```

@@ -94,6 +94,22 @@ target_include_directories(reassemble PRIVATE
 )
 
 ####################
+# image converter
+####################
+add_executable(image_converter
+    src/image_converter.cpp
+    src/image_loader.cpp
+    src/image_writer.cpp
+)
+target_link_libraries(image_converter PRIVATE
+    ${OpenCV_LIBS}
+)
+target_include_directories(image_converter PRIVATE
+    include
+)
+target_compile_options(image_converter PRIVATE -O3)
+
+####################
 # pretraining
 ####################
 add_executable(pretraining
@@ -101,6 +117,7 @@ add_executable(pretraining
     src/image_loader.cpp
     src/image_writer.cpp
     src/pattern_generator.cpp
+    src/png_size_estimator.cu
 )
 target_link_libraries(pretraining PRIVATE
     ${OpenCV_LIBS}
