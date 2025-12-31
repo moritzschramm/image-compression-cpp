@@ -3,6 +3,7 @@
 #include <opencv2/opencv.hpp>
 #include <string>
 #include <filesystem>
+#include <image_loader.h>
 
 torch::Tensor create_target(const cv::Mat& image)
 {
@@ -71,14 +72,15 @@ torch::Tensor create_target(const cv::Mat& image)
 }
 
 struct EdgeDataset : torch::data::Dataset<EdgeDataset> {
-    std::vector<cv::Mat> images;
+    std::vector<std::filesystem::path> image_paths;
+    const bool create_targets;
 
-    EdgeDataset(const std::vector<cv::Mat>& imgs)
-        : images(imgs) {}
+    EdgeDataset(const std::vector<std::filesystem::path>& imgs, bool create_targets)
+        : image_paths(imgs), create_targets(create_targets) {}
 
     torch::data::Example<> get(size_t idx) override {
 
-        cv::Mat img = images[idx];
+        cv::Mat img = load_image(image_paths[idx]);
 
         if (img.channels() == 1)
             cv::cvtColor(img, img, cv::COLOR_GRAY2BGRA);
@@ -91,13 +93,16 @@ struct EdgeDataset : torch::data::Dataset<EdgeDataset> {
             img.data, {img.rows, img.cols, 4}, torch::kFloat32
         ).permute({2, 0, 1}).clone();
 
-        torch::Tensor target = create_target(img);
+        torch::Tensor target;
+
+        if (create_targets) {
+            target = create_target(img);
+        }
 
         return {input, target};
     }
 
     torch::optional<size_t> size() const override {
-        return images.size();
+        return image_paths.size();
     }
 };
-

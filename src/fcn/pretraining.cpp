@@ -14,15 +14,8 @@ int main()
     const auto device = torch::kCUDA;
 
     auto image_paths = find_image_files_recursively(DATASET_DIR, IMAGE_FORMAT);
-    std::vector<cv::Mat> images;
 
-    for(const auto& path : image_paths)
-    {
-        cv::Mat input = load_image(path);
-        images.push_back(input);
-    }
-
-    auto train_dataset = EdgeDataset(images)
+    auto train_dataset = EdgeDataset(image_paths, /*create_targets=*/true)
         .map(torch::data::transforms::Stack<>());
 
     auto train_loader = torch::data::make_data_loader(
@@ -30,6 +23,7 @@ int main()
         torch::data::DataLoaderOptions()
             .batch_size(8)  // make sure images have the same dimensions; otherwise set batch size to 1
             .workers(4)
+            .drop_last(true)
     );
 
     std::cout << "Loaded pretraining data" << std::endl;
@@ -52,8 +46,8 @@ int main()
         int batch_count = 0;
 
         for (auto& batch : *train_loader) {
-            auto imgs = batch.data.to(device);
-            auto targets = batch.target.to(device);
+            auto imgs = batch.data.to(device, /*non_blocking=*/true);
+            auto targets = batch.target.to(device, /*non_blocking=*/true);
 
             //int64_t sample_id = batch.target.index({0, 0, 0, 0}).to(torch::kCPU).item<int64_t>();
             //std::cout << "id: " << sample_id << std::endl;
@@ -79,9 +73,10 @@ int main()
             total_loss += loss.item<float>();
             batch_count++;
 
-            /*std::cout << "Epoch [" << epoch << "/" << epochs
+            if (batch_count % 500 == 0)
+                std::cout << "Epoch [" << epoch << "/" << epochs
                                   << "] Batch [" << batch_count
-                                  << "] Loss: " << loss.item<float>() << std::endl;*/
+                                  << "] Loss: " << loss.item<float>() << std::endl;
         }
         std::cout << "Epoch [" << epoch << "/" << epochs
                               << "] Average Loss: " << (total_loss/batch_count) << std::endl;

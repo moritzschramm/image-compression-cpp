@@ -1,10 +1,14 @@
 #include <c10/core/DeviceType.h>
 #include <torch/torch.h>
+#include "configuration.h"
 #include "fcn/EdgeUNet.h"
+#include "fcn/EdgeDataset.h"
 #include "gaussian_policy.hpp"
 #include "ema_baseline.hpp"
+#include "image_loader.h"
 #include "rama_wrapper.cuh"
 #include "png_size_estimator.cuh"
+#include "compute_rewards.hpp"
 
 torch::Tensor flatten_grid_edges(const torch::Tensor& x)
 {
@@ -81,65 +85,90 @@ int main()
     std::vector<int32_t> i_idx;
     std::vector<int32_t> j_idx;
 
-    build_rama_indices(512, 512); // assuming height and width of 512x512
+    build_rama_indices(512, 512, i_idx, j_idx); // assuming height and width of 512x512
 
-    for (int step = 0; step < 1e5; ++step) {
-        torch::Tensor image = /* TODO load batch */ torch::randn({4, 4, 512, 512}, device);
+    auto i_device = torch::tensor(i_idx, torch::TensorOptions().dtype(torch::kInt32).device(device));
+    auto j_device = torch::tensor(j_idx, torch::TensorOptions().dtype(torch::kInt32).device(device));
 
-        // forward: raw_mu, raw_sigma [B,E]
-        // first and second output channel: horizontal edges
-        // third and fourth output channel: vertical edges
-        auto out = model->forward(image);
-        auto flat = flatten_grid_edges(out);
+    auto image_paths = find_image_files_recursively(DATASET_DIR, IMAGE_FORMAT);
 
-        torch::Tensor raw_mu = flat.select(1, 0);
-        torch::Tensor raw_sigma = flat.select(1, 1);
+    auto train_dataset = EdgeDataset(image_paths, /*create_targets=*/false)
+        .map(torch::data::transforms::Stack<>());
 
-        const double mu_scale = 2.0;
-        const double sigma_min = 0.02;
-        const double sigma_scale = 0.3;
-        mu = mu_scale * torch::tanh(raw_mu);
-        sigma = sigma_min + sigma_scale * torch::softplus(raw_sigma);
-        sigma = torch::clamp(sigma, 0.02, 0.3);
+    const size_t BATCH_SIZE = 8;
 
-        // sample weights + compute logp/entropy on GPU
-        auto samp = sample_gaussian_policy(mu, sigma);
+    auto train_loader = torch::data::make_data_loader(
+        std::move(train_dataset),
+        torch::data::DataLoaderOptions()
+            .batch_size(BATCH_SIZE)
+            .workers(4)
+            .drop_last(true)
+    );
 
-        // multicut + reward outside autograd
-        torch::Tensor rewards = torch::ones({4}, device);
-        {
-            torch::NoGradGuard ng;
+    for (int epoch = 0; epoch < 50; ++epoch) {
+        model->train();
+        for (auto& batch : *train_loader) {
+            // batch.data: [B,4,H,W], float32
+            auto images = batch.data.to(device, /*non_blocking=*/true);
 
-            torch::Tensor node_labels = rama_torch(i_idx, j_idx, samp.w.detach().contiguous()); // TODO maybe convert to float32
+            // forward: raw_mu, raw_sigma [B,E]
+            // first and second output channel: horizontal edges
+            // third and fourth output channel: vertical edges
+            // flatten edges to go from [B,4,H,W] -> [B,2,E] -> 2x [B,E]
+            auto out = model->forward(images);
+            auto flat = flatten_grid_edges(out);
 
-            //rewards = compute_rewards(node_labels);
-        }
+            torch::Tensor raw_mu = flat.select(1, 0);
+            torch::Tensor raw_sigma = flat.select(1, 1);
 
-        // baseline update
-        auto b = baseline.update(rewards);
+            const double mu_scale = 2.0;
+            const double sigma_min = 0.02;
+            const double sigma_scale = 0.3;
+            auto mu = mu_scale * torch::tanh(raw_mu);
+            auto sigma = sigma_min + sigma_scale * torch::softplus(raw_sigma);
+            sigma = torch::clamp(sigma, 0.02, 0.3);
 
-        // advantage [B] on device
-        auto adv = (rewards - b).detach();
+            // sample weights + compute logp/entropy on GPU
+            auto samp = sample_gaussian_policy(mu, sigma);
 
-        // Optional: advantage normalization (often stabilizes)
-        adv = (adv - adv.mean()) / (adv.std(/*unbiased=*/false) + 1e-6);
+            // multicut + reward outside autograd
+            torch::Tensor rewards = torch::empty({BATCH_SIZE}, images.options().dtype(torch::kFloat32));
+            {
+                torch::NoGradGuard ng;
 
-        // loss: -(adv * logp).mean() - entropy_coef * ent.mean()
-        auto loss = -(adv * samp.logp).mean() - entropy_coef * samp.ent.mean();
+                for (int i = 0; i < BATCH_SIZE; ++i) {
+                    auto edge_costs = samp.w[i].detach().to(torch::kFloat32).contiguous();
+                    torch::Tensor node_labels = rama_torch(i_device, j_device, edge_costs);
+                    rewards[i] = compute_rewards(images[i], node_labels);
+                }
+            }
 
-        opt.zero_grad();
-        loss.backward();
-        opt.step();
+            // baseline update
+            auto b = baseline.update(rewards);
 
-        if (step % 100 == 0) {
-            auto loss_v = loss.detach().to(torch::kCPU).item<double>();
-            auto rmean = rewards.mean().item<double>();
-            auto bval  = b.item<double>();
-            std::cout << "step=" << step
-                        << " loss=" << loss_v
-                        << " Rmean=" << rmean
-                        << " baseline=" << bval
-                        << std::endl;
+            // advantage [B] on device
+            auto adv = (rewards - b).detach();
+
+            // Optional: advantage normalization (often stabilizes) -> TODO check if necessary
+            adv = (adv - adv.mean()) / (adv.std(/*unbiased=*/false) + 1e-6);
+
+            // loss: -(adv * logp).mean() - entropy_coef * ent.mean()
+            auto loss = -(adv * samp.logp).mean() - entropy_coef * samp.ent.mean();
+
+            opt.zero_grad();
+            loss.backward();
+            opt.step();
+
+            if (step % 100 == 0) {
+                auto loss_v = loss.detach().to(torch::kCPU).item<double>();
+                auto rmean = rewards.mean().item<double>();
+                auto bval  = b.item<double>();
+                std::cout << "step=" << step
+                            << " loss=" << loss_v
+                            << " Rmean=" << rmean
+                            << " baseline=" << bval
+                            << std::endl;
+            }
         }
     }
 
