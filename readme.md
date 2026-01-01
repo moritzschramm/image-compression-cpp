@@ -7,15 +7,15 @@ Position in original image is stored as well, so reassembly to original image is
 Execute `./setup.sh`. This creates the necessary directories, fetches and patches dependencies. 
 
 Download the dataset from [ImageNet via kaggle](https://www.kaggle.com/competitions/imagenet-object-localization-challenge/data).
-Put the contents in a new directory called `/dataset`.
+Put the contents of the images in a new directory called `/dataset`. The images can be converted to the correct format with the `image_convert` executable.
 
 #### Libraries
  - `opencv` (4.12.0)
  - `libtorch` (2.9.1)
 
 ## Build
-NOTE: Right now the build only works with CUDA architecture 8.9 and CUDA Version 12.6. 
-Change CMakeLists.txt for different versions. 
+NOTE: Right now the build only works with CUDA architecture 8.9 and CUDA Version 12.6, but other versions may work as well. 
+Change `CMakeLists.txt` to try different versions. 
 ```
 ./build.sh
 ```
@@ -34,7 +34,8 @@ or build only single targets: `./build.sh <target>`, e.g. `./build.sh image_conv
 ## Training
 
 In pre-training, the network learns the edge costs for multicut segmentation based on local neighbor differences. 
-The actual training uses the cumulative sum of the compressed slices' image size as a reward for online reinforcement learning.
+The actual training uses the cumulative sum of the compressed slices' image size as a reward for 
+online reinforcement learning, by intepreting the edges as probabilities to sample from.
 
 ## Multicut
 
