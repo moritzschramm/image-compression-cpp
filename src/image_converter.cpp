@@ -7,8 +7,8 @@
 #include "image_writer.h"
 
 const std::string SOURCE_FORMAT = "jpeg";
-const int WIDTH = 512;
-const int HEIGHT = 512;
+const int WIDTH = 256;
+const int HEIGHT = 256;
 
 /**
  * resized and convert images from dataset to target format with correct compression level

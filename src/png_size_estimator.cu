@@ -550,3 +550,82 @@ double estimate_png_size_from_GpuMat(
         gpu.ptr<uint8_t>(), (int)gpu.step, gpu.cols, gpu.rows, channels,
         L_min, beta, b_match_token, gamma, overhead_base, adaptive_filter);
 }
+
+PngEstimatorFeatures compute_png_estimator_features_from_device_image(
+    const uint8_t* img_dev,
+    int width,
+    int height,
+    int channels,
+    int L_min,
+    bool adaptive_filter)
+{
+    if (!img_dev) throw std::runtime_error("img_dev is null");
+    if (width <= 0 || height <= 0 || channels <= 0 || channels > 4)
+        throw std::runtime_error("Invalid width/height/channels");
+
+    const size_t N = (size_t)width * (size_t)height * (size_t)channels;
+
+    uint8_t* residuals_dev = nullptr;
+    uint32_t* hist_dev = nullptr;
+
+    CUDA_CHECK(cudaMalloc(&residuals_dev, N * sizeof(uint8_t)));
+    CUDA_CHECK(cudaMalloc(&hist_dev, (size_t)channels * 256 * sizeof(uint32_t)));
+
+    compute_residuals_and_hist(img_dev, residuals_dev, hist_dev, width, height, channels, adaptive_filter);
+
+    // Histogram -> host -> entropy
+    std::vector<uint32_t> hist_host((size_t)channels * 256);
+    CUDA_CHECK(cudaMemcpy(hist_host.data(),
+                          hist_dev,
+                          hist_host.size() * sizeof(uint32_t),
+                          cudaMemcpyDeviceToHost));
+
+    double Hbar = 0.0;
+    for (int c = 0; c < channels; ++c) {
+        const uint32_t* h = &hist_host[(size_t)c * 256];
+        unsigned long long count_c = 0;
+        for (int v = 0; v < 256; ++v) count_c += (unsigned long long)h[v];
+        if (count_c == 0) continue;
+
+        double inv_total = 1.0 / (double)count_c;
+        double Hc = 0.0;
+        for (int v = 0; v < 256; ++v) {
+            uint32_t hv = h[v];
+            if (!hv) continue;
+            double p = (double)hv * inv_total;
+            Hc -= p * std::log2(p);
+        }
+        Hbar += Hc;
+    }
+    Hbar /= (double)channels;
+
+    // Run-length proxy on GPU
+    unsigned long long *d_match_symbols = nullptr, *d_match_count = nullptr, *d_match_len_sum = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_match_symbols, sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_match_count, sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMalloc(&d_match_len_sum, sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_match_symbols, 0, sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_match_count, 0, sizeof(unsigned long long)));
+    CUDA_CHECK(cudaMemset(d_match_len_sum, 0, sizeof(unsigned long long)));
+
+    const int rl_block = 256;
+    const int rl_grid  = 256;
+    run_length_stats_kernel<<<rl_grid, rl_block>>>(residuals_dev, N, L_min, d_match_symbols, d_match_count, d_match_len_sum);
+    CUDA_CHECK(cudaGetLastError());
+
+    unsigned long long match_symbols = 0, match_count = 0, match_len_sum = 0;
+    CUDA_CHECK(cudaMemcpy(&match_symbols, d_match_symbols, sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(&match_count,   d_match_count,   sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(&match_len_sum, d_match_len_sum, sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaFree(d_match_symbols));
+    CUDA_CHECK(cudaFree(d_match_count));
+    CUDA_CHECK(cudaFree(d_match_len_sum));
+    CUDA_CHECK(cudaFree(hist_dev));
+    CUDA_CHECK(cudaFree(residuals_dev));
+
+    double f_match = (N > 0) ? (double)match_symbols / (double)N : 0.0;
+    double Lbar = (match_count > 0) ? (double)match_len_sum / (double)match_count : (double)L_min;
+
+    return PngEstimatorFeatures{Hbar, f_match, Lbar};
+}

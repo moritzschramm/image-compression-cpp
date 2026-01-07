@@ -6,7 +6,6 @@
 #include "image_writer.h"
 #include "fcn/EdgeDataset.h"
 #include "fcn/EdgeUNet.h"
-#include "png_size_estimator.cuh"
 
 
 int main()
@@ -36,9 +35,9 @@ int main()
         torch::optim::AdamOptions(/*learning_rate=*/1e-3)
     );
 
-    torch::nn::SmoothL1Loss criterion(torch::nn::SmoothL1LossOptions().beta(0.1));
+    //torch::nn::SmoothL1Loss criterion(torch::nn::SmoothL1LossOptions().beta(0.1));
 
-    int epochs = 50;
+    int epochs = 2;
 
     for (int epoch = 1; epoch <= epochs; ++epoch) {
         model->train();
@@ -56,30 +55,86 @@ int main()
 
             auto outputs = model->forward(imgs);
 
-            // TODO discard loss at borders?
+            // masks are target channels 4 and 5 -> [B,2,H,W]
+            auto m0 = targets.index({torch::indexing::Slice(), 4, torch::indexing::Slice(), torch::indexing::Slice()}).unsqueeze(1); // [B,1,H,W]
+            auto m1 = targets.index({torch::indexing::Slice(), 5, torch::indexing::Slice(), torch::indexing::Slice()}).unsqueeze(1); // [B,1,H,W]
+            auto mask = torch::cat({m0, m0, m1, m1}, 1);                                  // [B,4,H,W]
 
-            /*auto pred_sel = torch::stack(
-                { outputs.index({torch::indexing::Slice(), 0, torch::indexing::Slice(), torch::indexing::Slice()}),
-                outputs.index({torch::indexing::Slice(), 2, torch::indexing::Slice(), torch::indexing::Slice()}) });
+            auto t0 = targets.index({torch::indexing::Slice(), 0, torch::indexing::Slice(), torch::indexing::Slice()}).unsqueeze(1);
+            auto t1 = targets.index({torch::indexing::Slice(), 1, torch::indexing::Slice(), torch::indexing::Slice()}).unsqueeze(1);
+            auto t2 = targets.index({torch::indexing::Slice(), 2, torch::indexing::Slice(), torch::indexing::Slice()}).unsqueeze(1);
+            auto t3 = targets.index({torch::indexing::Slice(), 3, torch::indexing::Slice(), torch::indexing::Slice()}).unsqueeze(1);
+            auto target = torch::cat({t0, t1, t2, t3}, 1);
 
-            auto target_sel = torch::stack(
-                { targets.index({torch::indexing::Slice(), 0, torch::indexing::Slice(), torch::indexing::Slice()}),
-                targets.index({torch::indexing::Slice(), 2, torch::indexing::Slice(), torch::indexing::Slice()}) });*/
+            // masked L1 (normalize by valid count)
+            auto abs_err = (outputs - target).abs();
+            auto denom = mask.sum().clamp_min(1.0);
+            auto loss = (abs_err * mask).sum() / denom;
 
-            auto loss = criterion(outputs, targets);
             loss.backward();
             optimizer.step();
 
             total_loss += loss.item<float>();
             batch_count++;
 
-            if (batch_count % 500 == 0)
+            if (batch_count % 500 == 0 || batch_count == 1) {
+                auto pred_sel = torch::cat({
+                    outputs.index({torch::indexing::Slice(), 0, torch::indexing::Slice(), torch::indexing::Slice()}).unsqueeze(1),
+                    outputs.index({torch::indexing::Slice(), 2, torch::indexing::Slice(), torch::indexing::Slice()}).unsqueeze(1)
+                }, 1); // [B,2,H,W]
+
+                auto target_sel = torch::cat({
+                    targets.index({torch::indexing::Slice(), 0, torch::indexing::Slice(), torch::indexing::Slice()}).unsqueeze(1),
+                    targets.index({torch::indexing::Slice(), 2, torch::indexing::Slice(), torch::indexing::Slice()}).unsqueeze(1)
+                }, 1); // [B,2,H,W]
+                
+                double tau = 0.05;  // choose based on target statistics
+
+                auto sign_pred   = torch::sign(pred_sel);
+                auto sign_target = torch::sign(target_sel);
+
+                // ignore near-zero targets
+                auto valid = target_sel.abs() > tau;
+
+                auto correct =
+                    (sign_pred == sign_target).logical_and(valid);
+
+                double sign_accuracy =
+                    correct.sum().item<double>() /
+                    valid.sum().item<double>();
+
+                auto valid_count = valid.sum().item<int64_t>();
+                auto total_count = valid.numel();
+
+                auto t = target_sel.detach();
+                auto s = torch::sign(target_sel);
+                auto flat = s.flatten();
+                auto n_total = flat.numel();
+
+                auto n_neg  = (flat == -1).sum().item<int64_t>();
+                auto n_zero = (flat ==  0).sum().item<int64_t>();
+                auto n_pos  = (flat ==  1).sum().item<int64_t>();
+
+                std::cout << "sign counts: "
+                        << "(-1)=" << n_neg
+                        << ", (0)=" << n_zero
+                        << ", (+1)=" << n_pos
+                        << " / total=" << n_total << "\n";
+
                 std::cout << "Epoch [" << epoch << "/" << epochs
-                                  << "] Batch [" << batch_count
-                                  << "] Loss: " << loss.item<float>() << std::endl;
+                            << "] Batch [" << batch_count
+                            << "] Loss: " << loss.item<float>()
+                            << " Sign accuracy: " << sign_accuracy
+                            << " valid: " << (double)valid_count / (double)total_count
+                            << " target min=" << t.min().item<double>()
+                            << " max=" << t.max().item<double>()
+                            << " mean=" << t.mean().item<double>()
+                            << " std=" << t.std().item<double>() << std::endl;
+            }
         }
         std::cout << "Epoch [" << epoch << "/" << epochs
                               << "] Average Loss: " << (total_loss/batch_count) << std::endl;
+        torch::save(model, "fcn_pretrained_" + std::to_string(std::time(0)) + "_epoch_" + std::to_string(epoch) + ".pt");
     }
 
     torch::save(model, "fcn_pretrained_" + std::to_string(std::time(0)) + ".pt");

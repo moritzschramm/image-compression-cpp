@@ -7,7 +7,7 @@ Position in original image is stored as well, so reassembly to original image is
 Execute `./setup.sh`. This creates the necessary directories, fetches and patches dependencies. 
 
 Download the dataset from [ImageNet via kaggle](https://www.kaggle.com/competitions/imagenet-object-localization-challenge/data).
-Put the contents of the images in a new directory called `/dataset`. The images can be converted to the correct format with the `image_convert` executable.
+Put the contents of the images in a new directory called `/dataset`. The images can be converted to the correct format with the `image_converter` executable.
 
 #### Libraries
  - `opencv` (4.12.0)

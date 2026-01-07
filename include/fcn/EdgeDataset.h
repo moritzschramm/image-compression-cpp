@@ -1,74 +1,99 @@
-#pragma once
 #include <torch/torch.h>
 #include <opencv2/opencv.hpp>
-#include <string>
 #include <filesystem>
-#include <image_loader.h>
+#include <vector>
+#include "image_loader.h"
 
-torch::Tensor create_target(const cv::Mat& image)
-{
-    CV_Assert(!image.empty());
-    CV_Assert(image.channels() == 1 || image.channels() == 3 || image.channels() == 4);
+// Target layout (C,H,W):
+// 0: cost_right   (learned)  [-1,1]
+// 1: sigma_right  (fixed)    0.1
+// 2: cost_down    (learned)  [-1,1]
+// 3: sigma_down   (fixed)    0.1
+// 4: mask_right   (1 if x+1<W else 0)
+// 5: mask_down    (1 if y+1<H else 0)
 
-    const int H = image.rows;
-    const int W = image.cols;
+static inline float luma_bgr01(const cv::Vec3f& bgr01) {
+    // OpenCV BGR order
+    return 0.114f * bgr01[0] + 0.587f * bgr01[1] + 0.299f * bgr01[2]; // in [0,1]
+}
 
-    cv::Mat work;
-    if (image.depth() != CV_8U)
-        image.convertTo(work, CV_8U, 1.0 / 256.0);  // scaling for 16-bit → 8-bit
-    else
-        work = image;
+torch::Tensor create_target_with_mask(const cv::Mat& img) {
+    CV_Assert(!img.empty());
+    CV_Assert(img.type() == CV_32FC3);
 
-    if (work.channels() == 1)
-        cv::cvtColor(work, work, cv::COLOR_GRAY2RGBA);
-    else if (work.channels() == 3)
-        cv::cvtColor(work, work, cv::COLOR_BGR2RGBA);
+    const int H = img.rows;
+    const int W = img.cols;
 
-    // max diff = sum over channels of max abs difference (255)
-    const float max_raw_diff = 255.0f * image.channels();
-
-    torch::Tensor out = torch::zeros({4, H, W}, torch::TensorOptions().dtype(torch::kFloat32));
+    torch::Tensor out = torch::zeros({6, H, W}, torch::TensorOptions().dtype(torch::kFloat32));
     auto A = out.accessor<float, 3>();
 
-    for (int y = 0; y < H; ++y)
-    {
-        for (int x = 0; x < W; ++x)
-        {
-            // Read current pixel
-            float I0[4] = {0,0,0,0};
-            const cv::Vec4b& v = work.at<cv::Vec4b>(y,x);
-            I0[0] = v[0]; I0[1] = v[1]; I0[2] = v[2]; I0[3] = v[3];
+    // sigma fixed everywhere (mask will exclude borders)
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            A[1][y][x] = 0.1f;
+            A[3][y][x] = 0.1f;
+        }
+    }
 
-            auto compute_cost = [&](int nx, int ny) -> float {
-                float I1[4] = {0,0,0,0};
-                const cv::Vec4b& v = work.at<cv::Vec4b>(ny,nx);
-                I1[0] = v[0]; I1[1] = v[1]; I1[2] = v[2]; I1[3] = v[3];
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            const cv::Vec3f& p0 = img.at<cv::Vec3f>(y, x);
+            const float L0 = luma_bgr01(p0);
 
-                float diff = 0.f;
-                for (int c = 0; c < work.channels(); ++c)
-                    diff += std::abs(I0[c] - I1[c]);
-
-                float aff  = 1.0f - (diff / max_raw_diff);   // [0,1]
-                float cost = aff * 2.0f - 1.0f;              // [-1,1]
-                return cost;
-            };
-
-            // hard code sigma value for pretraining
-            // right
+            // right neighbor
             if (x + 1 < W) {
-                A[0][y][x] = compute_cost(x+1, y);
-                A[1][y][x] = 0.1;
+                const cv::Vec3f& p1 = img.at<cv::Vec3f>(y, x + 1);
+                const float L1 = luma_bgr01(p1);
+
+                float d = L1 - L0;                 // signed, in [-1,1]
+                d = std::max(-1.0f, std::min(1.0f, d));
+
+                A[0][y][x] = d;
+                A[4][y][x] = 1.0f;                 // mask_right
             }
 
-            // down
+            // down neighbor
             if (y + 1 < H) {
-                A[2][y][x] = compute_cost(x, y+1);
-                A[3][y][x] = 0.1;
+                const cv::Vec3f& p1 = img.at<cv::Vec3f>(y + 1, x);
+                const float L1 = luma_bgr01(p1);
+
+                float d = L1 - L0;
+                d = std::max(-1.0f, std::min(1.0f, d));
+
+                A[2][y][x] = d;
+                A[5][y][x] = 1.0f;                 // mask_down
             }
         }
     }
 
     return out;
+}
+
+static cv::Mat to_f32c3_01_or_throw(const cv::Mat& img_any) {
+    CV_Assert(!img_any.empty());
+    CV_Assert(img_any.channels() == 1 || img_any.channels() == 3 || img_any.channels() == 4);
+
+    cv::Mat img3;
+    if (img_any.channels() == 1) {
+        cv::cvtColor(img_any, img3, cv::COLOR_GRAY2BGR);
+    } else if (img_any.channels() == 4) {
+        cv::cvtColor(img_any, img3, cv::COLOR_BGRA2BGR);
+    } else { // 3 channels
+        img3 = img_any;
+    }
+
+    cv::Mat img_f;
+    if (img3.depth() == CV_8U) {
+        img3.convertTo(img_f, CV_32FC3, 1.0 / 255.0);
+    } else if (img3.depth() == CV_16U) {
+        img3.convertTo(img_f, CV_32FC3, 1.0 / 65535.0);
+    } else if (img3.depth() == CV_32F) {
+        CV_Assert(img3.type() == CV_32FC3);
+        img_f = img3;
+    } else {
+        CV_Assert(false && "Unsupported image depth. Use 8U, 16U, or 32F.");
+    }
+    return img_f;
 }
 
 struct EdgeDataset : torch::data::Dataset<EdgeDataset> {
@@ -79,24 +104,20 @@ struct EdgeDataset : torch::data::Dataset<EdgeDataset> {
         : image_paths(imgs), create_targets(create_targets) {}
 
     torch::data::Example<> get(size_t idx) override {
-
         cv::Mat img = load_image(image_paths[idx]);
 
-        if (img.channels() == 1)
-            cv::cvtColor(img, img, cv::COLOR_GRAY2BGRA);
-        else if (img.channels() == 3)
-            cv::cvtColor(img, img, cv::COLOR_BGR2BGRA);
+        cv::Mat img_f = to_f32c3_01_or_throw(img);
 
-        img.convertTo(img, CV_32FC4, 1.0 / 255.0);
-
+        // Input tensor: [3,H,W]
         auto input = torch::from_blob(
-            img.data, {img.rows, img.cols, 4}, torch::kFloat32
+            img_f.data, {img_f.rows, img_f.cols, 3}, torch::kFloat32
         ).permute({2, 0, 1}).clone();
 
         torch::Tensor target;
-
         if (create_targets) {
-            target = create_target(img);
+            target = create_target_with_mask(img_f); // [6,H,W]
+        } else {
+            target = torch::Tensor(); // empty
         }
 
         return {input, target};

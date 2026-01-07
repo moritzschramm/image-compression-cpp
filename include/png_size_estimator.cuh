@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <opencv2/core/cuda.hpp>
+#include <cuda_runtime.h>
 
 #define CUDA_CHECK(expr)                                     \
     do {                                                     \
@@ -54,4 +55,22 @@ double estimate_png_size_from_GpuMat(
     float b_match_token = 18.0f,
     float gamma = 0.1f,
     double overhead_base = 300.0,
+    bool adaptive_filter = true);
+
+
+struct PngEstimatorFeatures {
+    double Hbar;     // mean residual entropy across channels (bits per symbol)
+    double f_match;  // match-covered symbol fraction (proxy)
+    double Lbar;     // mean run length among runs >= L_min (proxy)
+};
+
+// Computes (Hbar, f_match, Lbar) from a packed device image using the same
+// adaptive filtering + run-length proxy as the estimator.
+// This is what you need for calibration.
+PngEstimatorFeatures compute_png_estimator_features_from_device_image(
+    const uint8_t* img_dev,
+    int width,
+    int height,
+    int channels,
+    int L_min = 4,
     bool adaptive_filter = true);

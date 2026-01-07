@@ -8,11 +8,15 @@
  * - node_labels: Labelled pixels given by RAMA
  * returns scalar tensor
  */
-inline torch::tensor compute_rewards(const torch::tensor& image, const torch::tensor& node_labels)
+inline torch::Tensor compute_rewards(const torch::Tensor& image, const torch::Tensor& node_labels)
 {
     auto segments = extract_segments_bgra_cuda(image, node_labels);
 
     // TODO estimate size of whole image
     // TODO estimate size of each segment
     // TODO compute ratio between sizes as reward signal
+
+    torch::Tensor t;
+
+    return t;
 }

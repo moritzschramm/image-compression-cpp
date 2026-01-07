@@ -4,7 +4,6 @@
 
 #include <opencv2/core.hpp>
 #include <opencv2/core/cuda.hpp>
-#include <opencv2/core/cuda_stream_accessor.hpp>
 
 #include <vector>
 #include <cstdint>
@@ -102,11 +101,7 @@ inline std::vector<GpuSegmentRGBA> extract_segments_bgra_cuda(
     int64_t min_pixels_per_segment = 1,
     cv::cuda::Stream stream = cv::cuda::Stream::Null() // pass a stream for explicit stream control
 ) {
-    // using torch's current CUDA stream for correctness when sharing memory with OpenCV
-    // if no OpenCV stream gieven, wrap torch stream for downstream OpenCV ops
-    if (stream == cv::cuda::Stream::Null()) {
-        stream = cv::cuda::StreamAccessor::wrapStream(at::cuda::getDefaultCUDAStream());
-    }
+    (void)stream;
 
     torch::NoGradGuard ng;
 
@@ -126,7 +121,7 @@ inline std::vector<GpuSegmentRGBA> extract_segments_bgra_cuda(
     }
 
     // unique labels (CPU list for looping). This is small compared to image tensors
-    torch::Tensor unique_labels_cpu = labels_hw.unique().to(torch::kCPU);
+    torch::Tensor unique_labels_cpu = std::get<0>(labels_hw.flatten().sort()).to(torch::kCPU);
 
     std::vector<GpuSegmentRGBA> out;
     out.reserve(static_cast<size_t>(unique_labels_cpu.numel()));

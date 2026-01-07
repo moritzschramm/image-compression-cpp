@@ -116,7 +116,6 @@ add_executable(pretraining
     src/fcn/pretraining.cpp
     src/image_loader.cpp
     src/image_writer.cpp
-    src/png_size_estimator.cu
 )
 target_link_libraries(pretraining PRIVATE
     ${OpenCV_LIBS}
@@ -134,6 +133,8 @@ if(ENABLE_CUDA)
 add_executable(training
     src/fcn/training.cpp
     src/rama_wrapper.cu
+    src/image_loader.cpp
+    src/png_size_estimator.cu
 )
 target_link_libraries(training PRIVATE
     ${OpenCV_LIBS}
