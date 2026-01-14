@@ -70,7 +70,7 @@ int main()
     const auto device = torch::kCUDA;
 
     EdgeUNet model;
-    torch::load(model, "fcn_pretrained.pt");
+    torch::load(model, "fcn_pretrained_1767799034_epoch_1.pt");
 
     model->to(device);
 
@@ -85,7 +85,7 @@ int main()
     std::vector<int32_t> i_idx;
     std::vector<int32_t> j_idx;
 
-    build_rama_indices(512, 512, i_idx, j_idx); // assuming height and width of 512x512
+    build_rama_indices(256, 256, i_idx, j_idx); // assuming height and width of 256x256
 
     auto i_device = torch::tensor(i_idx, torch::TensorOptions().dtype(torch::kInt32).device(device));
     auto j_device = torch::tensor(j_idx, torch::TensorOptions().dtype(torch::kInt32).device(device));
@@ -107,9 +107,12 @@ int main()
 
     for (int epoch = 0; epoch < 50; ++epoch) {
         model->train();
+        int batch_count = 0;
+
         for (auto& batch : *train_loader) {
             // batch.data: [B,4,H,W], float32
             auto images = batch.data.to(device, /*non_blocking=*/true);
+            auto image_sizes = batch.target;
 
             // forward: raw_mu, raw_sigma [B,E]
             // first and second output channel: horizontal edges
@@ -139,7 +142,7 @@ int main()
                 for (int i = 0; i < BATCH_SIZE; ++i) {
                     auto edge_costs = samp.w[i].detach().to(torch::kFloat32).contiguous();
                     torch::Tensor node_labels = rama_torch(i_device, j_device, edge_costs);
-                    rewards[i] = compute_rewards(images[i], node_labels);
+                    rewards[i] = compute_rewards(images[i], node_labels, image_sizes[i][0].item<int>());
                 }
             }
 
@@ -149,26 +152,29 @@ int main()
             // advantage [B] on device
             auto adv = (rewards - b).detach();
 
-            // Optional: advantage normalization (often stabilizes) -> TODO check if necessary
             adv = (adv - adv.mean()) / (adv.std(/*unbiased=*/false) + 1e-6);
 
             // loss: -(adv * logp).mean() - entropy_coef * ent.mean()
-            auto loss = -(adv * samp.logp).mean() - entropy_coef * samp.ent.mean();
+            auto loss = -(adv * samp.logp).mean() - entropy_coef * samp.entropy.mean();
 
             opt.zero_grad();
             loss.backward();
             opt.step();
 
-            if (step % 100 == 0) {
+            batch_count++;
+
+            //if (batch_count % 100 == 0) {
                 auto loss_v = loss.detach().to(torch::kCPU).item<double>();
                 auto rmean = rewards.mean().item<double>();
                 auto bval  = b.item<double>();
-                std::cout << "step=" << step
+                std::cout << "step=" << batch_count
                             << " loss=" << loss_v
                             << " Rmean=" << rmean
                             << " baseline=" << bval
                             << std::endl;
-            }
+            //}
+            if (batch_count % 1000)
+                torch::save(model, "fcn_training_" + std::to_string(std::time(0)) + ".pt");
         }
     }
 

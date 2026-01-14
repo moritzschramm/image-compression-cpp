@@ -1,6 +1,9 @@
 #include <torch/torch.h>
 #include <opencv2/opencv.hpp>
 #include <filesystem>
+#include <cstdint>
+#include <system_error>
+#include <stdexcept>
 #include <vector>
 #include "image_loader.h"
 
@@ -96,6 +99,15 @@ static cv::Mat to_f32c3_01_or_throw(const cv::Mat& img_any) {
     return img_f;
 }
 
+std::uintmax_t file_size_bytes(const std::filesystem::path& p) {
+    std::error_code ec;
+    const auto sz = std::filesystem::file_size(p, ec);
+    if (ec) {
+        throw std::runtime_error("file_size failed for '" + p.string() + "': " + ec.message());
+    }
+    return sz; // bytes
+}
+
 struct EdgeDataset : torch::data::Dataset<EdgeDataset> {
     std::vector<std::filesystem::path> image_paths;
     const bool create_targets;
@@ -117,7 +129,8 @@ struct EdgeDataset : torch::data::Dataset<EdgeDataset> {
         if (create_targets) {
             target = create_target_with_mask(img_f); // [6,H,W]
         } else {
-            target = torch::Tensor(); // empty
+            // file size of image
+            target = torch::tensor({(int)file_size_bytes(image_paths[idx])}, torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU));
         }
 
         return {input, target};

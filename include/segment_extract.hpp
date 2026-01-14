@@ -3,7 +3,6 @@
 #include <torch/torch.h>
 
 #include <opencv2/core.hpp>
-#include <opencv2/core/cuda.hpp>
 
 #include <vector>
 #include <cstdint>
@@ -12,7 +11,6 @@ struct GpuSegmentRGBA {
     int64_t label = -1;
     cv::Rect bbox_xywh;          // bbox in original image coords (x,y,w,h)
     torch::Tensor rgba_tensor;   // CUDA, uint8, [h, w, 4], contiguous
-    cv::cuda::GpuMat rgba_mat;   // CV_8UC4 view into rgba_tensor (no copy)
 };
 
 inline torch::Tensor ensure_hwc_u8_cuda(const torch::Tensor& img_in, bool assume_input_rgb = true, bool output_bgra = true) {
@@ -92,17 +90,14 @@ inline torch::Tensor ensure_labels_hw_i64_cuda(const torch::Tensor& labels_in, i
  * Extract connected-component segments from a node label map
  * - image: CUDA tensor [H,W,C] (or [C,H,W]) with C=1/3/4; uint8 or float
  * - node_labels: CUDA tensor with H*W elements (or [H,W]) of component ids (int)
- * returns one BGRA cv::cuda::GpuMat per label, cropped to bbox, with alpha=0 outside the segment.
+ * returns one RGBA torch_tensor per label, cropped to bbox, with alpha=0 outside the segment.
  */
 inline std::vector<GpuSegmentRGBA> extract_segments_bgra_cuda(
     const torch::Tensor& image,
     const torch::Tensor& node_labels,
     bool assume_input_rgb = true,
-    int64_t min_pixels_per_segment = 1,
-    cv::cuda::Stream stream = cv::cuda::Stream::Null() // pass a stream for explicit stream control
+    int64_t min_pixels_per_segment = 1
 ) {
-    (void)stream;
-
     torch::NoGradGuard ng;
 
     torch::Tensor img3 = ensure_hwc_u8_cuda(image, assume_input_rgb, /*output_bgra=*/true);
@@ -163,17 +158,11 @@ inline std::vector<GpuSegmentRGBA> extract_segments_bgra_cuda(
         torch::Tensor a   = (m_crop * 255).unsqueeze(-1);             // [h,w,1] u8
         torch::Tensor rgba = torch::cat({rgb, a}, /*dim=*/2).contiguous(); // [h,w,4] u8 (BGRA)
 
-        // wrap tensor memory as cv::cuda::GpuMat (no copy)
-        // IMPORTANT: rgba_mat is only valid as long as rgba_tensor is alive
-        const size_t step_bytes = static_cast<size_t>(rgba.stride(0)) * rgba.element_size();
-        auto* ptr = reinterpret_cast<void*>(rgba.data_ptr<uint8_t>());
-        cv::cuda::GpuMat mat(static_cast<int>(h), static_cast<int>(w), CV_8UC4, ptr, step_bytes);
 
         GpuSegmentRGBA seg;
         seg.label = lbl;
         seg.bbox_xywh = cv::Rect(static_cast<int>(x0), static_cast<int>(y0), static_cast<int>(w), static_cast<int>(h));
         seg.rgba_tensor = rgba;
-        seg.rgba_mat = mat;
 
         out.emplace_back(std::move(seg));
     }
