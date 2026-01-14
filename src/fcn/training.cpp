@@ -67,14 +67,14 @@ void build_rama_indices(
 
 int main()
 {
+    torch::manual_seed(0);
+
     const auto device = torch::kCUDA;
 
     EdgeUNet model;
     torch::load(model, "fcn_pretrained_1767799034_epoch_1.pt");
 
     model->to(device);
-
-    torch::manual_seed(0);
 
     torch::optim::Adam opt(model->parameters(), torch::optim::AdamOptions(1e-4));
 

@@ -10,6 +10,8 @@
 
 int main()
 {
+    torch::manual_seed(0);
+
     const auto device = torch::kCUDA;
 
     auto image_paths = find_image_files_recursively(DATASET_DIR, IMAGE_FORMAT);
@@ -17,10 +19,12 @@ int main()
     auto train_dataset = EdgeDataset(image_paths, /*create_targets=*/true)
         .map(torch::data::transforms::Stack<>());
 
+    const size_t BATCH_SIZE = 8;
+
     auto train_loader = torch::data::make_data_loader(
         std::move(train_dataset),
         torch::data::DataLoaderOptions()
-            .batch_size(8)  // make sure images have the same dimensions; otherwise set batch size to 1
+            .batch_size(BATCH_SIZE)  // make sure images have the same dimensions; otherwise set batch size to 1
             .workers(4)
             .drop_last(true)
     );
@@ -37,7 +41,7 @@ int main()
 
     //torch::nn::SmoothL1Loss criterion(torch::nn::SmoothL1LossOptions().beta(0.1));
 
-    int epochs = 2;
+    int epochs = 1;
 
     for (int epoch = 1; epoch <= epochs; ++epoch) {
         model->train();
@@ -87,7 +91,7 @@ int main()
                     targets.index({torch::indexing::Slice(), 0, torch::indexing::Slice(), torch::indexing::Slice()}).unsqueeze(1),
                     targets.index({torch::indexing::Slice(), 2, torch::indexing::Slice(), torch::indexing::Slice()}).unsqueeze(1)
                 }, 1); // [B,2,H,W]
-                
+
                 double tau = 0.05;  // choose based on target statistics
 
                 auto sign_pred   = torch::sign(pred_sel);

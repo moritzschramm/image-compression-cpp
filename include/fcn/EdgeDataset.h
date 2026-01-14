@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <vector>
 #include "image_loader.h"
+#include "random_partition.hpp"
 
 // Target layout (C,H,W):
 // 0: cost_right   (learned)  [-1,1]
@@ -27,18 +28,29 @@ torch::Tensor create_target_with_mask(const cv::Mat& img) {
     const int H = img.rows;
     const int W = img.cols;
 
+    torch::Tensor partition = random_rect_partition(H, W, 16, 16, 0.5, 8, torch::randint(0, 9999, {1}).item<int64_t>());
+    auto P = partition.accessor<int, 3>();
+
     torch::Tensor out = torch::zeros({6, H, W}, torch::TensorOptions().dtype(torch::kFloat32));
     auto A = out.accessor<float, 3>();
 
     // sigma fixed everywhere (mask will exclude borders)
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
-            A[1][y][x] = 0.1f;
-            A[3][y][x] = 0.1f;
+            if (x + 1 < W) {
+                A[0][y][x] = P[0][y][x];    // mu horizontal
+                A[1][y][x] = 0.1f;          // sigma horizontal
+                A[4][y][x] = 1.0f;          // mask
+            }
+            if (y + 1 < H) {
+                A[2][y][x] = P[1][y][x];    // mu vertical
+                A[3][y][x] = 0.1f;          // sigma vertical
+                A[5][y][x] = 1.0f;          // mask
+            }
         }
     }
 
-    for (int y = 0; y < H; ++y) {
+    /*for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
             const cv::Vec3f& p0 = img.at<cv::Vec3f>(y, x);
             const float L0 = luma_bgr01(p0);
@@ -67,7 +79,7 @@ torch::Tensor create_target_with_mask(const cv::Mat& img) {
                 A[5][y][x] = 1.0f;                 // mask_down
             }
         }
-    }
+    }*/
 
     return out;
 }
