@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <vector>
 #include "image_loader.h"
-#include "random_partition.hpp"
+#include "canny_edge.hpp"
 
 // Target layout (C,H,W):
 // 0: cost_right   (learned)  [-1,1]
@@ -23,13 +23,13 @@ static inline float luma_bgr01(const cv::Vec3f& bgr01) {
 
 torch::Tensor create_target_with_mask(const cv::Mat& img) {
     CV_Assert(!img.empty());
-    CV_Assert(img.type() == CV_32FC3);
+    CV_Assert(img.type() == CV_8U);
 
     const int H = img.rows;
     const int W = img.cols;
 
-    torch::Tensor partition = random_rect_partition(H, W, 16, 16, 0.5, 8, torch::randint(0, 9999, {1}).item<int64_t>());
-    auto P = partition.accessor<int, 3>();
+    torch::Tensor edges = canny_edge_costs(img);
+    auto E = edges.accessor<int, 3>();
 
     torch::Tensor out = torch::zeros({6, H, W}, torch::TensorOptions().dtype(torch::kFloat32));
     auto A = out.accessor<float, 3>();
@@ -38,12 +38,12 @@ torch::Tensor create_target_with_mask(const cv::Mat& img) {
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
             if (x + 1 < W) {
-                A[0][y][x] = P[0][y][x];    // mu horizontal
+                A[0][y][x] = E[0][y][x];    // mu horizontal
                 A[1][y][x] = 0.1f;          // sigma horizontal
                 A[4][y][x] = 1.0f;          // mask
             }
             if (y + 1 < H) {
-                A[2][y][x] = P[1][y][x];    // mu vertical
+                A[2][y][x] = E[1][y][x];    // mu vertical
                 A[3][y][x] = 0.1f;          // sigma vertical
                 A[5][y][x] = 1.0f;          // mask
             }
@@ -139,7 +139,7 @@ struct EdgeDataset : torch::data::Dataset<EdgeDataset> {
 
         torch::Tensor target;
         if (create_targets) {
-            target = create_target_with_mask(img_f); // [6,H,W]
+            target = create_target_with_mask(img); // [6,H,W]
         } else {
             // file size of image
             target = torch::tensor({(int)file_size_bytes(image_paths[idx])}, torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU));
