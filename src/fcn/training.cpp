@@ -72,7 +72,7 @@ int main()
     const auto device = torch::kCUDA;
 
     EdgeUNet model;
-    torch::load(model, "fcn_pretrained_1767799034_epoch_1.pt");
+    torch::load(model, "fcn_pretrained_canny_1768555972_epoch_1.pt");
 
     model->to(device);
 
@@ -163,7 +163,7 @@ int main()
 
             batch_count++;
 
-            //if (batch_count % 100 == 0) {
+            if (batch_count % 100 == 0) {
                 auto loss_v = loss.detach().to(torch::kCPU).item<double>();
                 auto rmean = rewards.mean().item<double>();
                 auto bval  = b.item<double>();
@@ -172,7 +172,7 @@ int main()
                             << " Rmean=" << rmean
                             << " baseline=" << bval
                             << std::endl;
-            //}
+            }
             if (batch_count % 1000)
                 torch::save(model, "fcn_training_" + std::to_string(std::time(0)) + ".pt");
         }

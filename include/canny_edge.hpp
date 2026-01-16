@@ -1,12 +1,58 @@
 #include <torch/torch.h>
 #include <opencv2/opencv.hpp>
 
+static inline cv::Mat to_gray_u8_any(const cv::Mat& img_any) {
+    CV_Assert(!img_any.empty());
+
+    cv::Mat gray;
+    const int ch = img_any.channels();
+    if (ch == 1) {
+        gray = img_any;
+    } else if (ch == 3) {
+        cv::cvtColor(img_any, gray, cv::COLOR_BGR2GRAY);
+    } else if (ch == 4) {
+        cv::cvtColor(img_any, gray, cv::COLOR_BGRA2GRAY);
+    } else {
+        throw std::runtime_error("Unsupported channel count: " + std::to_string(ch));
+    }
+
+    cv::Mat gray_u8;
+    switch (gray.depth()) {
+        case CV_8U:
+            gray_u8 = gray;
+            break;
+        case CV_16U:
+            gray.convertTo(gray_u8, CV_8U, 1.0 / 257.0); // 65535/255 ≈ 257
+            break;
+        case CV_32F: {
+            double minv = 0.0, maxv = 0.0;
+            cv::minMaxLoc(gray, &minv, &maxv);
+
+            if (maxv <= 1.0 + 1e-6 && minv >= 0.0 - 1e-6) {
+                gray.convertTo(gray_u8, CV_8U, 255.0);
+            } else if (maxv > minv) {
+                const double scale = 255.0 / (maxv - minv);
+                const double shift = -minv * scale;
+                gray.convertTo(gray_u8, CV_8U, scale, shift);
+            } else {
+                gray_u8 = cv::Mat(gray.size(), CV_8U, cv::Scalar(0));
+            }
+            break;
+        }
+        default:
+            throw std::runtime_error("Unsupported depth: " + std::to_string(gray.depth()));
+    }
+
+    if (!gray_u8.isContinuous()) gray_u8 = gray_u8.clone();
+    return gray_u8;
+}
+
 // Returns a CPU tensor of shape [2, H, W] with values in {-1, +1} (dtype int8)
 // Channel 0 (horizontal): edge between (y,x) and (y,x+1) stored at (y,x)
 // Channel 1 (vertical):   edge between (y,x) and (y+1,x) stored at (y,x)
 // Last column (ch0) and last row (ch1) are set to +1 (no neighbor to form an edge with)
 inline torch::Tensor canny_edge_costs(
-    const cv::Mat& rgb_u8,
+    const cv::Mat& img,
     double canny_low = 50.0,
     double canny_high = 150.0,
     int aperture_size = 3,
@@ -14,14 +60,9 @@ inline torch::Tensor canny_edge_costs(
     int blur_ksize = 3,          // set 0 or 1 to disable blur
     double blur_sigma = 1.0
 ) {
-    CV_Assert(!rgb_u8.empty());
-    CV_Assert(rgb_u8.type() == CV_8UC3);
-
-    const int H = rgb_u8.rows;
-    const int W = rgb_u8.cols;
-
-    cv::Mat gray;
-    cv::cvtColor(rgb_u8, gray, cv::COLOR_BGR2GRAY);
+    cv::Mat gray = to_gray_u8_any(img);
+    const int H = gray.rows;
+    const int W = gray.cols;
 
     if (blur_ksize >= 3 && (blur_ksize % 2 == 1)) {
         cv::GaussianBlur(gray, gray, cv::Size(blur_ksize, blur_ksize), blur_sigma);

@@ -104,35 +104,48 @@ inline std::vector<GpuSegmentRGBA> extract_segments_bgra_cuda(
     const int64_t H = img3.size(0);
     const int64_t W = img3.size(1);
 
+    // --- normalize labels to int64 [H,W] on CUDA ---
     torch::Tensor labels_hw;
     if (node_labels.dim() == 2) {
         TORCH_CHECK(node_labels.size(0) == H && node_labels.size(1) == W,
                     "labels [H,W] must match image H,W");
         labels_hw = node_labels;
-        if (labels_hw.scalar_type() != torch::kInt64) labels_hw = labels_hw.to(torch::kInt64);
-        labels_hw = labels_hw.contiguous();
     } else {
-        labels_hw = ensure_labels_hw_i64_cuda(node_labels, H, W);
+        labels_hw = node_labels;
+        TORCH_CHECK(labels_hw.numel() == H * W,
+                    "labels must have H*W elements (node labels per pixel). Got numel=",
+                    labels_hw.numel(), " expected=", H * W);
+        labels_hw = labels_hw.view({H, W});
     }
+    TORCH_CHECK(labels_hw.is_cuda(), "labels must be CUDA tensor");
+    if (labels_hw.scalar_type() != torch::kInt64) labels_hw = labels_hw.to(torch::kInt64);
+    labels_hw = labels_hw.contiguous();
 
-    // unique labels (CPU list for looping). This is small compared to image tensors
-    torch::Tensor unique_labels_cpu = std::get<0>(labels_hw.flatten().sort()).to(torch::kCPU);
+    // --- compute unique labels and compact mapping 0..K-1 ---
+    // Your build supports: at::_unique(self, sorted, return_inverse) -> (unique, inverse)
+    auto flat = labels_hw.reshape({-1});
+    auto uniq_tup = at::_unique(flat, /*sorted=*/true, /*return_inverse=*/true);
+    torch::Tensor unique_vals = std::get<0>(uniq_tup); // [K] original label ids
+    torch::Tensor inverse     = std::get<1>(uniq_tup); // [H*W] compact ids 0..K-1
+
+    const int64_t K = unique_vals.numel();
+    TORCH_CHECK(K > 0, "no labels found");
+
+    // Use compact labels for masks (fast, avoids pathological ids)
+    labels_hw = inverse.view({H, W}).contiguous(); // values 0..K-1
 
     std::vector<GpuSegmentRGBA> out;
-    out.reserve(static_cast<size_t>(unique_labels_cpu.numel()));
+    out.reserve(static_cast<size_t>(K));
 
-    for (int64_t i = 0; i < unique_labels_cpu.numel(); ++i) {
-        const int64_t lbl = unique_labels_cpu[i].item<int64_t>();
+    for (int64_t k = 0; k < K; ++k) {
+        // k is compact label id (0..K-1)
+        torch::Tensor mask = (labels_hw == k); // [H,W] bool (CUDA)
 
-        // mask: [H,W] bool on GPU
-        torch::Tensor mask = (labels_hw == lbl);
-
-        // skip tiny/empty segments
         const int64_t pix = mask.sum().item<int64_t>();
         if (pix < min_pixels_per_segment) continue;
 
-        // find bbox via nonzero coords on GPU then reduce
-        torch::Tensor coords = mask.nonzero(); // [K,2] (y,x)
+        // bbox from nonzero coords
+        torch::Tensor coords = mask.nonzero(); // [pix,2] (y,x)
         TORCH_CHECK(coords.numel() > 0, "internal: nonzero returned empty for a non-empty mask");
 
         torch::Tensor ys = coords.select(1, 0);
@@ -146,22 +159,20 @@ inline std::vector<GpuSegmentRGBA> extract_segments_bgra_cuda(
         const int64_t h = y1 - y0 + 1;
         const int64_t w = x1 - x0 + 1;
 
-        // crop image and mask to bbox
         auto ysl = torch::indexing::Slice(y0, y1 + 1);
         auto xsl = torch::indexing::Slice(x0, x1 + 1);
 
-        torch::Tensor img_crop = img3.index({ysl, xsl, torch::indexing::Slice()}).contiguous();       // [h,w,3] u8
-        torch::Tensor m_crop   = mask.index({ysl, xsl}).to(torch::kUInt8).contiguous();               // [h,w] u8 {0,1}
+        torch::Tensor img_crop = img3.index({ysl, xsl, torch::indexing::Slice()}).contiguous(); // [h,w,3] u8
+        torch::Tensor m_crop   = mask.index({ysl, xsl}).to(torch::kUInt8).contiguous();         // [h,w] u8 {0,1}
 
-        // zero RGB outside mask, set alpha = 255 inside, 0 outside
-        torch::Tensor rgb = img_crop * m_crop.unsqueeze(-1);          // [h,w,3] u8
-        torch::Tensor a   = (m_crop * 255).unsqueeze(-1);             // [h,w,1] u8
+        torch::Tensor rgb  = img_crop * m_crop.unsqueeze(-1);          // [h,w,3] u8
+        torch::Tensor a    = (m_crop * 255).unsqueeze(-1);             // [h,w,1] u8
         torch::Tensor rgba = torch::cat({rgb, a}, /*dim=*/2).contiguous(); // [h,w,4] u8 (BGRA)
 
-
         GpuSegmentRGBA seg;
-        seg.label = lbl;
-        seg.bbox_xywh = cv::Rect(static_cast<int>(x0), static_cast<int>(y0), static_cast<int>(w), static_cast<int>(h));
+        seg.label = unique_vals[k].item<int64_t>(); // original label id (0..28 in your case)
+        seg.bbox_xywh = cv::Rect(static_cast<int>(x0), static_cast<int>(y0),
+                                 static_cast<int>(w), static_cast<int>(h));
         seg.rgba_tensor = rgba;
 
         out.emplace_back(std::move(seg));

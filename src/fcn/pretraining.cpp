@@ -81,6 +81,9 @@ int main()
             total_loss += loss.item<float>();
             batch_count++;
 
+            if (batch_count == 10000)
+                torch::save(model, "fcn_pretrained_canny_" + std::to_string(std::time(0)) + "_epoch_" + std::to_string(epoch) + ".pt");
+
             if (batch_count % 500 == 0 || batch_count == 1) {
                 auto pred_sel = torch::cat({
                     outputs.index({torch::indexing::Slice(), 0, torch::indexing::Slice(), torch::indexing::Slice()}).unsqueeze(1),

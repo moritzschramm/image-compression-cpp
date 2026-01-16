@@ -22,14 +22,12 @@ static inline float luma_bgr01(const cv::Vec3f& bgr01) {
 }
 
 torch::Tensor create_target_with_mask(const cv::Mat& img) {
-    CV_Assert(!img.empty());
-    CV_Assert(img.type() == CV_8U);
 
     const int H = img.rows;
     const int W = img.cols;
 
     torch::Tensor edges = canny_edge_costs(img);
-    auto E = edges.accessor<int, 3>();
+    auto E = edges.accessor<int8_t, 3>();
 
     torch::Tensor out = torch::zeros({6, H, W}, torch::TensorOptions().dtype(torch::kFloat32));
     auto A = out.accessor<float, 3>();
@@ -38,14 +36,14 @@ torch::Tensor create_target_with_mask(const cv::Mat& img) {
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
             if (x + 1 < W) {
-                A[0][y][x] = E[0][y][x];    // mu horizontal
-                A[1][y][x] = 0.1f;          // sigma horizontal
-                A[4][y][x] = 1.0f;          // mask
+                A[0][y][x] = static_cast<float>(E[0][y][x]);    // mu horizontal
+                A[1][y][x] = 0.1f;                              // sigma horizontal
+                A[4][y][x] = 1.0f;                              // mask
             }
             if (y + 1 < H) {
-                A[2][y][x] = E[1][y][x];    // mu vertical
-                A[3][y][x] = 0.1f;          // sigma vertical
-                A[5][y][x] = 1.0f;          // mask
+                A[2][y][x] = static_cast<float>(E[1][y][x]);    // mu vertical
+                A[3][y][x] = 0.1f;                              // sigma vertical
+                A[5][y][x] = 1.0f;                              // mask
             }
         }
     }
