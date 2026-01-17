@@ -100,7 +100,8 @@ struct EdgeDataset : torch::data::Dataset<EdgeDataset> {
             target = create_target_with_mask(img); // [6,H,W]
         } else {
             // file size of image
-            target = torch::tensor({static_cast<int64_t>(file_size_bytes(image_paths[idx]))}, torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU));
+            const double sz = static_cast<double>(file_size_bytes(image_paths[idx]));
+            target = torch::scalar_tensor(sz, torch::TensorOptions().dtype(torch::kFloat64).device(torch::kCPU));
         }
 
         input = input.pin_memory();

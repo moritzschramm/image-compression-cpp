@@ -45,14 +45,14 @@ torch::Tensor flatten_grid_edges(const torch::Tensor& x)
     const int64_t W = x.size(3);
 
     // horizontal edges: channels 0,1 — drop last column
-    auto h = x.slice(1, 0, 2).slice(3, 0, W - 1);  // [B, 2, H, W-1]
+    auto h = x.slice(1, 0, 2).slice(3, 0, W - 1).contiguous();  // [B, 2, H, W-1]
 
     // vertical edges: channels 2,3 — drop last row
-    auto v = x.slice(1, 2, 4).slice(2, 0, H - 1);  // [B, 2, H-1, W]
+    auto v = x.slice(1, 2, 4).slice(2, 0, H - 1).contiguous();  // [B, 2, H-1, W]
 
     // flatten spatial dims
-    auto h_flat = h.reshape({B, 2, -1});  // [B, 2, H*(W-1)]
-    auto v_flat = v.reshape({B, 2, -1});  // [B, 2, (H-1)*W]
+    auto h_flat = h.flatten(2);  // [B, 2, H*(W-1)]
+    auto v_flat = v.flatten(2);  // [B, 2, (H-1)*W]
 
     // concatenate edge lists
     return torch::cat({h_flat, v_flat}, /*dim=*/2);  // [B, 2, E]
@@ -126,8 +126,7 @@ int main()
         torch::Tensor output = model->forward(input);
 
         auto flat = flatten_grid_edges(output);
-        torch::Tensor edge_costs = flat.select(1, 0);
-        // torch::Tensor raw_sigma = flat.select(1, 1); // not needed for inference
+        auto mu = mu_scale * torch::tanh(flat.select(1,0));
 
         std::vector<int32_t> i_idx;
         std::vector<int32_t> j_idx;
@@ -137,7 +136,7 @@ int main()
         auto i_device = torch::tensor(i_idx, torch::TensorOptions().dtype(torch::kInt32).device(device));
         auto j_device = torch::tensor(j_idx, torch::TensorOptions().dtype(torch::kInt32).device(device));
 
-        torch::Tensor node_labels = rama_torch(i_device, j_device, edge_costs);
+        torch::Tensor node_labels = rama_torch(i_device, j_device, mu.contiguous());
 
         node_labels = node_labels.to(torch::kCPU);
 

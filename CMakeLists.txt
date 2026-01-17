@@ -135,6 +135,8 @@ add_executable(training
     src/rama_wrapper.cu
     src/image_loader.cpp
     src/png_size_estimator.cu
+    src/segment_stats.cu
+    src/compute_rewards.cu
 )
 target_link_libraries(training PRIVATE
     ${OpenCV_LIBS}

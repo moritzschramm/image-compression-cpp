@@ -1,57 +1,28 @@
-#include "png_size_estimator.cuh"
-#include <cuda_runtime.h>
-#include <cstdint>
-#include <cstdio>
-#include <vector>
+#include "png_size_estimator_masked.cuh"
 #include <cmath>
-#include <stdexcept>
 
-
-__device__ inline int paeth_predictor(int a, int b, int c)
-{
+// Paeth predictor (device)
+__device__ inline int paeth_predictor(int a, int b, int c) {
     int p  = a + b - c;
     int pa = abs(p - a);
     int pb = abs(p - b);
     int pc = abs(p - c);
-
     if (pa <= pb && pa <= pc) return a;
     if (pb <= pc) return b;
     return c;
 }
 
 // ---------------------------
-// Utility: pitched->packed copy (device-to-device)
+// Kernel 1 (masked): per-row filter costs in bbox
 // ---------------------------
-__global__ void copy_pitched_to_packed_kernel(
-    const uint8_t* __restrict__ src,
-    int src_step,
-    uint8_t* __restrict__ dst,
-    int width,
-    int height,
+__global__ void compute_filter_costs_per_row_masked_kernel(
+    const uint8_t* __restrict__ img,    // full image HWC
+    const int64_t* __restrict__ labels, // full labels HW
+    int full_W, int full_H,
+    int x0, int y0, int width, int height,
+    int64_t k,
+    uint32_t* __restrict__ costs_out,   // [height*5]
     int channels)
-{
-    int x = (int)(blockIdx.x * blockDim.x + threadIdx.x);
-    int y = (int)(blockIdx.y * blockDim.y + threadIdx.y);
-    if (x >= width || y >= height) return;
-
-    const uint8_t* src_row = src + (size_t)y * (size_t)src_step;
-    uint8_t* dst_row = dst + (size_t)y * (size_t)width * (size_t)channels;
-
-    int base = x * channels;
-    #pragma unroll
-    for (int c = 0; c < 4; ++c) {
-        if (c < channels) dst_row[base + c] = src_row[base + c];
-    }
-}
-
-// ---------------------------
-// Kernel 1: per-row filter costs (heuristic SAD on signed residuals)
-// filters: 0 None, 1 Sub, 2 Up, 3 Avg, 4 Paeth
-// ---------------------------
-__global__ void compute_filter_costs_per_row_kernel(
-    const uint8_t* __restrict__ img,
-    uint32_t* __restrict__ costs_out, // [height*5]
-    int width, int height, int channels)
 {
     int y = (int)blockIdx.x;
     if (y >= height) return;
@@ -65,23 +36,45 @@ __global__ void compute_filter_costs_per_row_kernel(
 
     uint32_t local_none = 0, local_sub = 0, local_up = 0, local_avg = 0, local_paeth = 0;
 
+    const int gy = y0 + y;
+    if (gy < 0 || gy >= full_H) return;
+
     for (int x = (int)threadIdx.x; x < width; x += (int)blockDim.x) {
+        const int gx = x0 + x;
+        if (gx < 0 || gx >= full_W) continue;
+
+        const int64_t idx_lab = (int64_t)gy * full_W + gx;
+        const bool in_seg = (labels[idx_lab] == k);
+
         for (int c = 0; c < channels; ++c) {
-            int idx = (y * width + x) * channels + c;
-            int cur = (int)img[idx];
+            const int64_t idx_img = ((int64_t)gy * full_W + gx) * channels + c;
+
+            int cur = in_seg ? (int)img[idx_img] : 0;
 
             int left = 0, up = 0, up_left = 0;
-            if (x > 0) left = (int)img[idx - channels];
+
+            if (x > 0) {
+                const int gx_l = gx - 1;
+                const int64_t il = ((int64_t)gy * full_W + gx_l);
+                const bool in_l = (labels[il] == k);
+                left = in_l ? (int)img[idx_img - channels] : 0;
+            }
             if (y > 0) {
-                int up_idx = ((y - 1) * width + x) * channels + c;
-                up = (int)img[up_idx];
+                const int gy_u = gy - 1;
+                const int64_t iu = ((int64_t)gy_u * full_W + gx);
+                const bool in_u = (labels[iu] == k);
+                const int64_t idx_up = ((int64_t)gy_u * full_W + gx) * channels + c;
+                up = in_u ? (int)img[idx_up] : 0;
             }
             if (x > 0 && y > 0) {
-                int ul_idx = ((y - 1) * width + (x - 1)) * channels + c;
-                up_left = (int)img[ul_idx];
+                const int gx_ul = gx - 1, gy_ul = gy - 1;
+                const int64_t iul = ((int64_t)gy_ul * full_W + gx_ul);
+                const bool in_ul = (labels[iul] == k);
+                const int64_t idx_ul = ((int64_t)gy_ul * full_W + gx_ul) * channels + c;
+                up_left = in_ul ? (int)img[idx_ul] : 0;
             }
 
-            // None
+            // None (heuristic uses signed residual of raw byte)
             {
                 uint8_t r8 = (uint8_t)cur;
                 int s = (int)((int8_t)r8);
@@ -170,16 +163,19 @@ __global__ void select_filter_per_row_kernel(
 }
 
 // ---------------------------
-// Kernel 3: compute residual stream given selected per-row filter
-// residuals: packed interleaved like img
+// Kernel 3 (masked): residuals in bbox
 // ---------------------------
-__global__ void compute_residuals_with_selected_filter_kernel(
+__global__ void compute_residuals_with_selected_filter_masked_kernel(
     const uint8_t* __restrict__ img,
+    const int64_t* __restrict__ labels,
+    int full_W, int full_H,
+    int x0, int y0, int width, int height,
+    int64_t k,
     const uint8_t* __restrict__ filter_id, // [height]
-    uint8_t* __restrict__ residuals,
-    int width, int height, int channels)
+    uint8_t* __restrict__ residuals,       // [width*height*channels]
+    int channels)
 {
-    size_t N = (size_t)width * (size_t)height * (size_t)channels;
+    const size_t N = (size_t)width * (size_t)height * (size_t)channels;
     size_t idx = (size_t)blockIdx.x * (size_t)blockDim.x + (size_t)threadIdx.x;
 
     while (idx < N) {
@@ -188,20 +184,40 @@ __global__ void compute_residuals_with_selected_filter_kernel(
         int x         = pixel_idx % width;
         int y         = pixel_idx / width;
 
-        int cur = (int)img[idx];
+        const int gx = x0 + x;
+        const int gy = y0 + y;
 
-        int left = 0, up = 0, up_left = 0;
-        if (x > 0) left = (int)img[idx - (size_t)channels];
-        if (y > 0) {
-            int up_idx = ((y - 1) * width + x) * channels + c;
-            up = (int)img[(size_t)up_idx];
-        }
-        if (x > 0 && y > 0) {
-            int ul_idx = ((y - 1) * width + (x - 1)) * channels + c;
-            up_left = (int)img[(size_t)ul_idx];
+        int cur = 0, left = 0, up = 0, up_left = 0;
+
+        if ((unsigned)gx < (unsigned)full_W && (unsigned)gy < (unsigned)full_H) {
+            const int64_t il = (int64_t)gy * full_W + gx;
+            const bool in_seg = (labels[il] == k);
+            const int64_t ii = ((int64_t)gy * full_W + gx) * channels + c;
+            cur = in_seg ? (int)img[ii] : 0;
+
+            if (x > 0) {
+                const int gx_l = gx - 1;
+                const int64_t il2 = (int64_t)gy * full_W + gx_l;
+                const bool in_l = (labels[il2] == k);
+                left = in_l ? (int)img[ii - channels] : 0;
+            }
+            if (y > 0) {
+                const int gy_u = gy - 1;
+                const int64_t iu = (int64_t)gy_u * full_W + gx;
+                const bool in_u = (labels[iu] == k);
+                const int64_t iu_img = ((int64_t)gy_u * full_W + gx) * channels + c;
+                up = in_u ? (int)img[iu_img] : 0;
+            }
+            if (x > 0 && y > 0) {
+                const int gx_ul = gx - 1, gy_ul = gy - 1;
+                const int64_t iul = (int64_t)gy_ul * full_W + gx_ul;
+                const bool in_ul = (labels[iul] == k);
+                const int64_t iul_img = ((int64_t)gy_ul * full_W + gx_ul) * channels + c;
+                up_left = in_ul ? (int)img[iul_img] : 0;
+            }
         }
 
-        uint8_t f = filter_id[y];
+        const uint8_t f = filter_id[y];
         int pred = 0;
         if (f == 0) pred = 0;
         else if (f == 1) pred = left;
@@ -214,6 +230,91 @@ __global__ void compute_residuals_with_selected_filter_kernel(
 
         idx += (size_t)blockDim.x * (size_t)gridDim.x;
     }
+}
+
+// ---------------------------
+// Entropy from hist on GPU
+// hist: [channels*256], count_per_channel = width*height
+// ---------------------------
+__global__ void entropy_from_hist_kernel(
+    const uint32_t* __restrict__ hist,
+    double* __restrict__ Hc,   // [channels]
+    int channels,
+    uint32_t count_per_channel)
+{
+    int c = (int)blockIdx.x;
+    if (c >= channels) return;
+
+    int v = (int)threadIdx.x; // 0..255 assumed
+    __shared__ double sh[256];
+
+    double acc = 0.0;
+    if (v < 256) {
+        uint32_t hv = hist[c * 256 + v];
+        if (hv) {
+        double p = (double)hv / (double)count_per_channel;
+        acc = -p * ::log2(p);
+        }
+    }
+    sh[v] = acc;
+    __syncthreads();
+
+    for (int stride = 128; stride > 0; stride >>= 1) {
+        if (v < stride) sh[v] += sh[v + stride];
+        __syncthreads();
+    }
+    if (v == 0) Hc[c] = sh[0];
+}
+
+// ---------------------------
+// Mean of channels
+// ---------------------------
+__global__ void mean_channels_kernel(const double* __restrict__ Hc, double* __restrict__ Hbar, int channels) {
+    // one block, 256 threads
+    __shared__ double sh[256];
+    int t = (int)threadIdx.x;
+    double v = 0.0;
+    if (t < channels) v = Hc[t];
+    sh[t] = v;
+    __syncthreads();
+
+    for (int stride = 128; stride > 0; stride >>= 1) {
+        if (t < stride) sh[t] += sh[t + stride];
+        __syncthreads();
+    }
+    if (t == 0) *Hbar = sh[0] / (double)channels;
+}
+
+// ---------------------------
+// Compute size formula
+// ---------------------------
+__global__ void compute_size_kernel(
+    double* __restrict__ out,
+    double Hbar,
+    unsigned long long match_symbols,
+    unsigned long long match_count,
+    unsigned long long match_len_sum,
+    size_t N,
+    int L_min,
+    double beta,
+    double b_match_token,
+    double gamma,
+    double overhead_base,
+    int height)
+{
+    double f_match = 0.0;
+    if (N > 0 && match_symbols > 0) f_match = (double)match_symbols / (double)N;
+
+    double L_bar = (double)L_min;
+    if (match_count > 0) L_bar = (double)match_len_sum / (double)match_count;
+
+    double b_lit   = Hbar + beta;
+    double b_match = (b_match_token / L_bar) + gamma;
+    double b_data  = (1.0 - f_match) * b_lit + f_match * b_match;
+
+    double S_overhead = overhead_base + (double)height;
+    double S_est = S_overhead + ((double)N * b_data) / 8.0;
+    *out = S_est;
 }
 
 // ---------------------------
@@ -319,313 +420,153 @@ __global__ void run_length_stats_kernel(
     }
 }
 
-// ---------------------------
-// Internal helper: compute residuals+hist from packed img_dev
-// ---------------------------
-static void compute_residuals_and_hist(
-    const uint8_t* img_dev,
-    uint8_t* residuals_dev,
-    uint32_t* hist_dev,
-    int width,
-    int height,
-    int channels,
-    bool adaptive_filter)
-{
-    // Histogram init
-    CUDA_CHECK(cudaMemset(hist_dev, 0, (size_t)channels * 256 * sizeof(uint32_t)));
+// workspace store
+PngEstimatorWorkspace& get_png_ws(int device_index) {
+    static thread_local std::vector<PngEstimatorWorkspace> ws(16); // adjust if >16 GPUs
+    return ws.at((size_t)device_index);
+}
 
+// main entrypoint
+void estimate_png_size_masked_segment_to_output(
+    const uint8_t* img_hwc_u8, int full_W, int full_H, int channels,
+    const int64_t* labels_compact_hw,
+    const int32_t* counts_k,
+    int64_t seg_id_k,
+    int x0, int y0, int w, int h,
+    int32_t min_pixels,
+    int L_min, float beta, float b_match_token, float gamma, double overhead_base,
+    bool adaptive_filter,
+    double* out_dev)
+{
+    if (!img_hwc_u8 || !labels_compact_hw || !counts_k || !out_dev) throw std::runtime_error("null ptr");
+    if (channels < 1 || channels > 4) throw std::runtime_error("channels must be 1..4");
+    if (w <= 0 || h <= 0) {
+        // write 0
+        CUDA_CHECK(cudaMemsetAsync(out_dev, 0, sizeof(double), c10::cuda::getCurrentCUDAStream().stream()));
+        return;
+    }
+
+    const auto stream = c10::cuda::getCurrentCUDAStream().stream();
+    const int dev = c10::cuda::current_device();
+    auto& ws = get_png_ws(dev);
+    ws.ensure((int64_t)w * h * channels, h, channels, c10::Device(c10::kCUDA, dev));
+
+    // If too small, skip (device-side check)
+    // We avoid a sync by reading counts on device in a tiny kernel:
+    // (simpler: just run and let bbox be small, but min_pixels was requested)
+    // Do it with a 1-thread kernel:
+    auto counts_ptr = counts_k;
+    auto out_ptr = out_dev;
+    const int64_t k = seg_id_k;
+    const int32_t mp = min_pixels;
+    auto skip_check = [] __global__ (const int32_t* counts, int64_t k, int32_t mp, double* out) {
+        if (threadIdx.x == 0 && blockIdx.x == 0) {
+            if (counts[(int)k] < mp) *out = 0.0;
+        }
+    };
+    skip_check<<<1,1,0,stream>>>(counts_ptr, k, mp, out_ptr);
+    CUDA_CHECK(cudaGetLastError());
+
+    const size_t N = (size_t)w * (size_t)h * (size_t)channels;
+
+    // hist = 0, match = 0
+    CUDA_CHECK(cudaMemsetAsync(ws.hist_u32.data_ptr(), 0, (size_t)channels * 256 * sizeof(uint32_t), stream));
+    CUDA_CHECK(cudaMemsetAsync(ws.match_symbols_u64.data_ptr(), 0, sizeof(unsigned long long), stream));
+    CUDA_CHECK(cudaMemsetAsync(ws.match_count_u64.data_ptr(),   0, sizeof(unsigned long long), stream));
+    CUDA_CHECK(cudaMemsetAsync(ws.match_len_sum_u64.data_ptr(), 0, sizeof(unsigned long long), stream));
+
+    // adaptive filter: costs + filter + residuals
     const int block_size = 256;
-    size_t N = (size_t)width * (size_t)height * (size_t)channels;
     int grid_size = (int)((N + (size_t)block_size - 1) / (size_t)block_size);
     int launch_grid = grid_size > 65535 ? 65535 : grid_size;
 
-    if (adaptive_filter) {
-        // allocate per-row costs + filter ids
-        uint32_t* costs_dev = nullptr;
-        uint8_t* filter_dev = nullptr;
-        CUDA_CHECK(cudaMalloc(&costs_dev, (size_t)height * 5 * sizeof(uint32_t)));
-        CUDA_CHECK(cudaMalloc(&filter_dev, (size_t)height * sizeof(uint8_t)));
+    uint8_t* residuals = (uint8_t*)ws.residuals_u8.data_ptr();
+    uint32_t* costs    = (uint32_t*)ws.costs_u32.data_ptr();
+    uint8_t*  filter   = (uint8_t*)ws.filter_u8.data_ptr();
 
-        // Kernel 1
-        dim3 k1_grid(height);
+    if (adaptive_filter) {
+        dim3 k1_grid(h);
         dim3 k1_block(256);
         size_t k1_shmem = 5ULL * (size_t)k1_block.x * sizeof(uint32_t);
-        compute_filter_costs_per_row_kernel<<<k1_grid, k1_block, k1_shmem>>>(
-            img_dev, costs_dev, width, height, channels);
+
+        compute_filter_costs_per_row_masked_kernel<<<k1_grid, k1_block, k1_shmem, stream>>>(
+            img_hwc_u8, labels_compact_hw, full_W, full_H, x0, y0, w, h, seg_id_k, costs, channels);
         CUDA_CHECK(cudaGetLastError());
 
-        // Kernel 2
         dim3 k2_block(256);
-        dim3 k2_grid((height + (int)k2_block.x - 1) / (int)k2_block.x);
-        select_filter_per_row_kernel<<<k2_grid, k2_block>>>(costs_dev, filter_dev, height);
+        dim3 k2_grid((h + (int)k2_block.x - 1) / (int)k2_block.x);
+
+        select_filter_per_row_kernel<<<k2_grid, k2_block, 0, stream>>>(costs, filter, h);
         CUDA_CHECK(cudaGetLastError());
 
-        // Kernel 3
-        compute_residuals_with_selected_filter_kernel<<<launch_grid, block_size>>>(
-            img_dev, filter_dev, residuals_dev, width, height, channels);
+        compute_residuals_with_selected_filter_masked_kernel<<<launch_grid, block_size, 0, stream>>>(
+            img_hwc_u8, labels_compact_hw, full_W, full_H, x0, y0, w, h, seg_id_k, filter, residuals, channels);
         CUDA_CHECK(cudaGetLastError());
-
-        CUDA_CHECK(cudaFree(costs_dev));
-        CUDA_CHECK(cudaFree(filter_dev));
     } else {
-        // if disabled adaptive filter -> still need residuals
-        // use filter_id==Paeth for all rows by faking filter_id in a temporary buffer
-        uint8_t* filter_dev = nullptr;
-        CUDA_CHECK(cudaMalloc(&filter_dev, (size_t)height * sizeof(uint8_t)));
-        CUDA_CHECK(cudaMemset(filter_dev, 4, (size_t)height * sizeof(uint8_t))); // 4 = Paeth
-
-        compute_residuals_with_selected_filter_kernel<<<launch_grid, block_size>>>(
-            img_dev, filter_dev, residuals_dev, width, height, channels);
+        // all rows Paeth (4)
+        CUDA_CHECK(cudaMemsetAsync(filter, 4, (size_t)h * sizeof(uint8_t), stream));
+        compute_residuals_with_selected_filter_masked_kernel<<<launch_grid, block_size, 0, stream>>>(
+            img_hwc_u8, labels_compact_hw, full_W, full_H, x0, y0, w, h, seg_id_k, filter, residuals, channels);
         CUDA_CHECK(cudaGetLastError());
-
-        CUDA_CHECK(cudaFree(filter_dev));
     }
 
-    // histogram residuals
+    // histogram
     size_t shmem_hist = (size_t)channels * 256 * sizeof(uint32_t);
-    histogram_residuals_kernel<<<launch_grid, block_size, shmem_hist>>>(
-        residuals_dev, hist_dev, width, height, channels);
+    histogram_residuals_kernel<<<launch_grid, block_size, shmem_hist, stream>>>(
+        residuals, (uint32_t*)ws.hist_u32.data_ptr(), w, h, channels);
     CUDA_CHECK(cudaGetLastError());
-}
 
-// ---------------------------
-// Public API: packed device image
-// ---------------------------
-double estimate_png_size_from_device_image(
-    const uint8_t* img_dev,
-    int width,
-    int height,
-    int channels,
-    int L_min,
-    float beta,
-    float b_match_token,
-    float gamma,
-    double overhead_base,
-    bool adaptive_filter)
-{
-    if (!img_dev) throw std::runtime_error("img_dev is null");
-    if (width <= 0 || height <= 0 || channels <= 0 || channels > 4)
-        throw std::runtime_error("Invalid width/height/channels (channels must be 1..4)");
+    // entropy on GPU
+    const uint32_t count_per_channel = (uint32_t)((uint64_t)w * (uint64_t)h);
+    entropy_from_hist_kernel<<<channels, 256, 0, stream>>>(
+        (const uint32_t*)ws.hist_u32.data_ptr(),
+        (double*)ws.Hc_f64.data_ptr(),
+        channels, count_per_channel);
+    CUDA_CHECK(cudaGetLastError());
 
-    const size_t N = (size_t)width * (size_t)height * (size_t)channels;
+    mean_channels_kernel<<<1, 256, 0, stream>>>(
+        (const double*)ws.Hc_f64.data_ptr(),
+        (double*)ws.Hbar_f64.data_ptr(),
+        channels);
+    CUDA_CHECK(cudaGetLastError());
 
-    uint8_t* residuals_dev = nullptr;
-    uint32_t* hist_dev = nullptr;
+    // run-length proxy
+    run_length_stats_kernel<<<256, 256, 0, stream>>>(
+        residuals,
+        N,
+        L_min,
+        (unsigned long long*)ws.match_symbols_u64.data_ptr(),
+        (unsigned long long*)ws.match_count_u64.data_ptr(),
+        (unsigned long long*)ws.match_len_sum_u64.data_ptr());
+    CUDA_CHECK(cudaGetLastError());
 
-    CUDA_CHECK(cudaMalloc(&residuals_dev, N * sizeof(uint8_t)));
-    CUDA_CHECK(cudaMalloc(&hist_dev, (size_t)channels * 256 * sizeof(uint32_t)));
-
-    compute_residuals_and_hist(img_dev, residuals_dev, hist_dev, width, height, channels, adaptive_filter);
-
-    // copy histogram to host
-    std::vector<uint32_t> hist_host((size_t)channels * 256);
-    CUDA_CHECK(cudaMemcpy(hist_host.data(),
-                          hist_dev,
-                          hist_host.size() * sizeof(uint32_t),
-                          cudaMemcpyDeviceToHost));
-
-    // compute per channel entropy on host
-    std::vector<double> H_c((size_t)channels, 0.0);
-    for (int c = 0; c < channels; ++c) {
-        const uint32_t* h = &hist_host[(size_t)c * 256];
-
-        unsigned long long count_c = 0;
-        for (int v = 0; v < 256; ++v) count_c += (unsigned long long)h[v];
-
-        if (count_c == 0) { H_c[(size_t)c] = 0.0; continue; }
-
-        double inv_total = 1.0 / (double)count_c;
-        double H = 0.0;
-        for (int v = 0; v < 256; ++v) {
-            uint32_t hv = h[v];
-            if (!hv) continue;
-            double p = (double)hv * inv_total;
-            H -= p * std::log2(p);
+    // compute size (GPU) -> out_dev
+    auto launch_size = [] __global__ (
+        double* out,
+        const double* Hbar,
+        const unsigned long long* ms,
+        const unsigned long long* mc,
+        const unsigned long long* mls,
+        size_t N,
+        int L_min,
+        double beta,
+        double b_match_token,
+        double gamma,
+        double overhead_base,
+        int height)
+    {
+        if (threadIdx.x == 0 && blockIdx.x == 0) {
+            compute_size_kernel(out, *Hbar, *ms, *mc, *mls, N, L_min, beta, b_match_token, gamma, overhead_base, height);
         }
-        H_c[(size_t)c] = H;
-    }
+    };
 
-    double H_bar = 0.0;
-    for (int c = 0; c < channels; ++c) H_bar += H_c[(size_t)c];
-    H_bar /= (double)channels;
-
-    // match proxy on GPU (run-length)
-    unsigned long long *d_match_symbols = nullptr, *d_match_count = nullptr, *d_match_len_sum = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_match_symbols, sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMalloc(&d_match_count, sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMalloc(&d_match_len_sum, sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemset(d_match_symbols, 0, sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemset(d_match_count, 0, sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemset(d_match_len_sum, 0, sizeof(unsigned long long)));
-
-    const int rl_block = 256;
-    const int rl_grid = 256;
-    run_length_stats_kernel<<<rl_grid, rl_block>>>(residuals_dev, N, L_min, d_match_symbols, d_match_count, d_match_len_sum);
+    launch_size<<<1, 1, 0, stream>>>(
+        out_dev,
+        (const double*)ws.Hbar_f64.data_ptr(),
+        (const unsigned long long*)ws.match_symbols_u64.data_ptr(),
+        (const unsigned long long*)ws.match_count_u64.data_ptr(),
+        (const unsigned long long*)ws.match_len_sum_u64.data_ptr(),
+        N, L_min,
+        (double)beta, (double)b_match_token, (double)gamma, overhead_base, h);
     CUDA_CHECK(cudaGetLastError());
-
-    unsigned long long h_match_symbols = 0, h_match_count = 0, h_match_len_sum = 0;
-    CUDA_CHECK(cudaMemcpy(&h_match_symbols, d_match_symbols, sizeof(unsigned long long), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(&h_match_count,   d_match_count,   sizeof(unsigned long long), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(&h_match_len_sum, d_match_len_sum, sizeof(unsigned long long), cudaMemcpyDeviceToHost));
-
-    CUDA_CHECK(cudaFree(d_match_symbols));
-    CUDA_CHECK(cudaFree(d_match_count));
-    CUDA_CHECK(cudaFree(d_match_len_sum));
-    CUDA_CHECK(cudaFree(hist_dev));
-    CUDA_CHECK(cudaFree(residuals_dev));
-
-    // compute f_match and L_bar
-    double f_match = 0.0;
-    double L_bar = (double)L_min;
-    if (N > 0 && h_match_symbols > 0) f_match = (double)h_match_symbols / (double)N;
-    if (h_match_count > 0) L_bar = (double)h_match_len_sum / (double)h_match_count;
-
-    // bit cost model
-    double b_lit   = H_bar + (double)beta;
-    double b_match = ((double)b_match_token / L_bar) + (double)gamma;
-    double b_data  = (1.0 - f_match) * b_lit + f_match * b_match;
-
-    // overhead: PNG/zlib headers + one filter byte per scanline
-    double S_overhead = overhead_base + (double)height;
-
-    // total bytes
-    double S_est = S_overhead + ((double)N * b_data) / 8.0;
-    return S_est;
-}
-
-// ---------------------------
-// Public API: pitched device image (e.g., cv::cuda::GpuMat)
-// ---------------------------
-double estimate_png_size_from_pitched_device_image(
-    const void* gpu_mat_data,
-    int step_bytes,
-    int width,
-    int height,
-    int channels,
-    int L_min,
-    float beta,
-    float b_match_token,
-    float gamma,
-    double overhead_base,
-    bool adaptive_filter)
-{
-    if (!gpu_mat_data) throw std::runtime_error("gpu_mat_data is null");
-    if (step_bytes <= 0) throw std::runtime_error("step_bytes must be > 0");
-
-    const size_t packed_size = (size_t)width * (size_t)height * (size_t)channels;
-
-    uint8_t* packed_dev = nullptr;
-    CUDA_CHECK(cudaMalloc(&packed_dev, packed_size));
-
-    dim3 block(32, 8);
-    dim3 grid((width + (int)block.x - 1) / (int)block.x,
-              (height + (int)block.y - 1) / (int)block.y);
-
-    copy_pitched_to_packed_kernel<<<grid, block>>>(
-        (const uint8_t*)gpu_mat_data, step_bytes, packed_dev, width, height, channels);
-    CUDA_CHECK(cudaGetLastError());
-
-    double out = estimate_png_size_from_device_image(
-        packed_dev, width, height, channels, L_min, beta, b_match_token, gamma, overhead_base, adaptive_filter);
-
-    CUDA_CHECK(cudaFree(packed_dev));
-    return out;
-}
-
-double estimate_png_size_from_GpuMat(
-    const cv::cuda::GpuMat& gpu,
-    int L_min,
-    float beta,
-    float b_match_token,
-    float gamma,
-    double overhead_base,
-    bool adaptive_filter)
-{
-    if (gpu.empty()) throw std::runtime_error("GpuMat is empty");
-    if (gpu.depth() != CV_8U) throw std::runtime_error("GpuMat must be CV_8U");
-    int channels = gpu.channels();
-    if (channels < 1 || channels > 4) throw std::runtime_error("GpuMat channels must be 1..4");
-
-    return estimate_png_size_from_pitched_device_image(
-        gpu.ptr<uint8_t>(), (int)gpu.step, gpu.cols, gpu.rows, channels,
-        L_min, beta, b_match_token, gamma, overhead_base, adaptive_filter);
-}
-
-PngEstimatorFeatures compute_png_estimator_features_from_device_image(
-    const uint8_t* img_dev,
-    int width,
-    int height,
-    int channels,
-    int L_min,
-    bool adaptive_filter)
-{
-    if (!img_dev) throw std::runtime_error("img_dev is null");
-    if (width <= 0 || height <= 0 || channels <= 0 || channels > 4)
-        throw std::runtime_error("Invalid width/height/channels");
-
-    const size_t N = (size_t)width * (size_t)height * (size_t)channels;
-
-    uint8_t* residuals_dev = nullptr;
-    uint32_t* hist_dev = nullptr;
-
-    CUDA_CHECK(cudaMalloc(&residuals_dev, N * sizeof(uint8_t)));
-    CUDA_CHECK(cudaMalloc(&hist_dev, (size_t)channels * 256 * sizeof(uint32_t)));
-
-    compute_residuals_and_hist(img_dev, residuals_dev, hist_dev, width, height, channels, adaptive_filter);
-
-    // Histogram -> host -> entropy
-    std::vector<uint32_t> hist_host((size_t)channels * 256);
-    CUDA_CHECK(cudaMemcpy(hist_host.data(),
-                          hist_dev,
-                          hist_host.size() * sizeof(uint32_t),
-                          cudaMemcpyDeviceToHost));
-
-    double Hbar = 0.0;
-    for (int c = 0; c < channels; ++c) {
-        const uint32_t* h = &hist_host[(size_t)c * 256];
-        unsigned long long count_c = 0;
-        for (int v = 0; v < 256; ++v) count_c += (unsigned long long)h[v];
-        if (count_c == 0) continue;
-
-        double inv_total = 1.0 / (double)count_c;
-        double Hc = 0.0;
-        for (int v = 0; v < 256; ++v) {
-            uint32_t hv = h[v];
-            if (!hv) continue;
-            double p = (double)hv * inv_total;
-            Hc -= p * std::log2(p);
-        }
-        Hbar += Hc;
-    }
-    Hbar /= (double)channels;
-
-    // Run-length proxy on GPU
-    unsigned long long *d_match_symbols = nullptr, *d_match_count = nullptr, *d_match_len_sum = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_match_symbols, sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMalloc(&d_match_count, sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMalloc(&d_match_len_sum, sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemset(d_match_symbols, 0, sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemset(d_match_count, 0, sizeof(unsigned long long)));
-    CUDA_CHECK(cudaMemset(d_match_len_sum, 0, sizeof(unsigned long long)));
-
-    const int rl_block = 256;
-    const int rl_grid  = 256;
-    run_length_stats_kernel<<<rl_grid, rl_block>>>(residuals_dev, N, L_min, d_match_symbols, d_match_count, d_match_len_sum);
-    CUDA_CHECK(cudaGetLastError());
-
-    unsigned long long match_symbols = 0, match_count = 0, match_len_sum = 0;
-    CUDA_CHECK(cudaMemcpy(&match_symbols, d_match_symbols, sizeof(unsigned long long), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(&match_count,   d_match_count,   sizeof(unsigned long long), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(&match_len_sum, d_match_len_sum, sizeof(unsigned long long), cudaMemcpyDeviceToHost));
-
-    CUDA_CHECK(cudaFree(d_match_symbols));
-    CUDA_CHECK(cudaFree(d_match_count));
-    CUDA_CHECK(cudaFree(d_match_len_sum));
-    CUDA_CHECK(cudaFree(hist_dev));
-    CUDA_CHECK(cudaFree(residuals_dev));
-
-    double f_match = (N > 0) ? (double)match_symbols / (double)N : 0.0;
-    double Lbar = (match_count > 0) ? (double)match_len_sum / (double)match_count : (double)L_min;
-
-    return PngEstimatorFeatures{Hbar, f_match, Lbar};
 }

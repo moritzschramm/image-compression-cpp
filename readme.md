@@ -10,11 +10,11 @@ Download the dataset from [ImageNet via kaggle](https://www.kaggle.com/competiti
 Put the contents of the images in a new directory called `/dataset`. The images can be converted to the correct format with the `image_converter` executable.
 
 #### Libraries
- - `opencv` (4.12.0)
+ - `opencv` (4.12.0) (+ `ximgproc` module)
  - `libtorch` (2.9.1)
 
 ## Build
-NOTE: Right now the build only works with CUDA architecture 8.9 and CUDA Version 12.6, but other versions may work as well. 
+NOTE: Build only tested with CUDA architecture 8.9 and CUDA Version 12.6, but other versions may work as well. 
 Change `CMakeLists.txt` to try different versions. 
 ```
 ./build.sh
@@ -33,7 +33,7 @@ or build only single targets: `./build.sh <target>`, e.g. `./build.sh image_conv
 
 ## Training
 
-In pre-training, the network learns the edge costs for multicut segmentation based on local neighbor differences. 
+In pre-training, the network learns the edge costs for multicut segmentation based on a superpixel partition. 
 The actual training uses the cumulative sum of the compressed slices' image size as a reward for 
 online reinforcement learning, by intepreting the edges as probabilities to sample from.
 

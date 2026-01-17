@@ -7,8 +7,7 @@
 #include "ema_baseline.hpp"
 #include "image_loader.h"
 #include "rama_wrapper.cuh"
-#include "png_size_estimator.cuh"
-#include "compute_rewards.hpp"
+#include "compute_rewards.cuh"
 
 torch::Tensor flatten_grid_edges(const torch::Tensor& x)
 {
@@ -20,14 +19,14 @@ torch::Tensor flatten_grid_edges(const torch::Tensor& x)
     const int64_t W = x.size(3);
 
     // horizontal edges: channels 0,1 — drop last column
-    auto h = x.slice(1, 0, 2).slice(3, 0, W - 1);  // [B, 2, H, W-1]
+    auto h = x.slice(1, 0, 2).slice(3, 0, W - 1).contiguous();  // [B, 2, H, W-1]
 
     // vertical edges: channels 2,3 — drop last row
-    auto v = x.slice(1, 2, 4).slice(2, 0, H - 1);  // [B, 2, H-1, W]
+    auto v = x.slice(1, 2, 4).slice(2, 0, H - 1).contiguous();  // [B, 2, H-1, W]
 
     // flatten spatial dims
-    auto h_flat = h.reshape({B, 2, -1});  // [B, 2, H*(W-1)]
-    auto v_flat = v.reshape({B, 2, -1});  // [B, 2, (H-1)*W]
+    auto h_flat = h.flatten(2);  // [B, 2, H*(W-1)]
+    auto v_flat = v.flatten(2);  // [B, 2, (H-1)*W]
 
     // concatenate edge lists
     return torch::cat({h_flat, v_flat}, /*dim=*/2);  // [B, 2, E]
@@ -110,9 +109,8 @@ int main()
         int batch_count = 0;
 
         for (auto& batch : *train_loader) {
-            // batch.data: [B,4,H,W], float32
-            auto images = batch.data.to(device, /*non_blocking=*/true);
-            auto image_sizes = batch.target;
+            auto images = batch.data.to(device, /*non_blocking=*/true); // batch.data: [B,3,H,W], float32
+            auto image_sizes = batch.target.to(device, /*non_blocking=*/true);
 
             // forward: raw_mu, raw_sigma [B,E]
             // first and second output channel: horizontal edges
@@ -126,10 +124,9 @@ int main()
 
             const double mu_scale = 2.0;
             const double sigma_min = 0.02;
-            const double sigma_scale = 0.3;
+            const double sigma_max = 0.30;
             auto mu = mu_scale * torch::tanh(raw_mu);
-            auto sigma = sigma_min + sigma_scale * torch::softplus(raw_sigma);
-            sigma = torch::clamp(sigma, 0.02, 0.3);
+            auto sigma = sigma_min + (sigma_max - sigma_min) * torch::sigmoid(raw_sigma);
 
             // sample weights + compute logp/entropy on GPU
             auto samp = sample_gaussian_policy(mu, sigma);
@@ -139,26 +136,26 @@ int main()
             {
                 torch::NoGradGuard ng;
 
-                for (int i = 0; i < BATCH_SIZE; ++i) {
-                    auto edge_costs = samp.w[i].detach().to(torch::kFloat32).contiguous();
-                    torch::Tensor node_labels = rama_torch(i_device, j_device, edge_costs);
-                    rewards[i] = compute_rewards(images[i], node_labels, image_sizes[i][0].item<int>());
-                }
+                auto edge_costs = samp.w.detach().to(torch::kFloat32).contiguous();
+                torch::Tensor node_labels = rama_torch_batched(i_device, j_device, edge_costs);
+                rewards = compute_rewards_batched(images, node_labels, image_sizes);
             }
 
             // baseline update
-            auto b = baseline.update(rewards);
-
-            // advantage [B] on device
+            auto b = baseline.update(rewards).to(rewards.device());
             auto adv = (rewards - b).detach();
 
-            adv = (adv - adv.mean()) / (adv.std(/*unbiased=*/false) + 1e-6);
-
-            // loss: -(adv * logp).mean() - entropy_coef * ent.mean()
-            auto loss = -(adv * samp.logp).mean() - entropy_coef * samp.entropy.mean();
+            adv = (adv - adv.mean()) / (adv.std(false).clamp_min(1e-6));
 
             opt.zero_grad();
+
+            const double E = static_cast<double>(mu.size(1));
+            auto loss = -(adv * (samp.logp / E)).mean() - entropy_coef * (samp.entropy / E).mean();
+
             loss.backward();
+
+            torch::nn::utils::clip_grad_norm_(model->parameters(), 1.0);
+
             opt.step();
 
             batch_count++;
