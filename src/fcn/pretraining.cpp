@@ -39,9 +39,7 @@ int main()
         torch::optim::AdamOptions(/*learning_rate=*/1e-3)
     );
 
-    //torch::nn::SmoothL1Loss criterion(torch::nn::SmoothL1LossOptions().beta(0.1));
-
-    int epochs = 1;
+    int epochs = 10;
 
     for (int epoch = 1; epoch <= epochs; ++epoch) {
         model->train();
@@ -51,9 +49,6 @@ int main()
         for (auto& batch : *train_loader) {
             auto imgs = batch.data.to(device, /*non_blocking=*/true);
             auto targets = batch.target.to(device, /*non_blocking=*/true);
-
-            //int64_t sample_id = batch.target.index({0, 0, 0, 0}).to(torch::kCPU).item<int64_t>();
-            //std::cout << "id: " << sample_id << std::endl;
 
             optimizer.zero_grad();
 
@@ -81,9 +76,6 @@ int main()
             total_loss += loss.item<float>();
             batch_count++;
 
-            if (batch_count == 10000)
-                torch::save(model, "fcn_pretrained_canny_" + std::to_string(std::time(0)) + "_epoch_" + std::to_string(epoch) + ".pt");
-
             if (batch_count % 500 == 0 || batch_count == 1) {
                 auto pred_sel = torch::cat({
                     outputs.index({torch::indexing::Slice(), 0, torch::indexing::Slice(), torch::indexing::Slice()}).unsqueeze(1),
@@ -103,36 +95,19 @@ int main()
                 // ignore near-zero targets
                 auto valid = target_sel.abs() > tau;
 
-                auto correct =
-                    (sign_pred == sign_target).logical_and(valid);
+                auto correct = (sign_pred == sign_target).logical_and(valid);
 
                 double sign_accuracy =
                     correct.sum().item<double>() /
                     valid.sum().item<double>();
 
-                auto valid_count = valid.sum().item<int64_t>();
-                auto total_count = valid.numel();
-
                 auto t = target_sel.detach();
                 auto s = torch::sign(target_sel);
-                auto flat = s.flatten();
-                auto n_total = flat.numel();
-
-                auto n_neg  = (flat == -1).sum().item<int64_t>();
-                auto n_zero = (flat ==  0).sum().item<int64_t>();
-                auto n_pos  = (flat ==  1).sum().item<int64_t>();
-
-                std::cout << "sign counts: "
-                        << "(-1)=" << n_neg
-                        << ", (0)=" << n_zero
-                        << ", (+1)=" << n_pos
-                        << " / total=" << n_total << "\n";
 
                 std::cout << "Epoch [" << epoch << "/" << epochs
                             << "] Batch [" << batch_count
                             << "] Loss: " << loss.item<float>()
                             << " Sign accuracy: " << sign_accuracy
-                            << " valid: " << (double)valid_count / (double)total_count
                             << " target min=" << t.min().item<double>()
                             << " max=" << t.max().item<double>()
                             << " mean=" << t.mean().item<double>()

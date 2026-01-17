@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <vector>
 #include "image_loader.h"
-#include "canny_edge.hpp"
+#include "slic_edge.hpp"
 
 // Target layout (C,H,W):
 // 0: cost_right   (learned)  [-1,1]
@@ -26,7 +26,7 @@ torch::Tensor create_target_with_mask(const cv::Mat& img) {
     const int H = img.rows;
     const int W = img.cols;
 
-    torch::Tensor edges = canny_edge_costs(img);
+    torch::Tensor edges = slic_edge_costs(img);
     auto E = edges.accessor<int8_t, 3>();
 
     torch::Tensor out = torch::zeros({6, H, W}, torch::TensorOptions().dtype(torch::kFloat32));
