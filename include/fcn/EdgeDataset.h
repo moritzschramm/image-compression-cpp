@@ -16,68 +16,28 @@
 // 4: mask_right   (1 if x+1<W else 0)
 // 5: mask_down    (1 if y+1<H else 0)
 
-static inline float luma_bgr01(const cv::Vec3f& bgr01) {
-    // OpenCV BGR order
-    return 0.114f * bgr01[0] + 0.587f * bgr01[1] + 0.299f * bgr01[2]; // in [0,1]
-}
-
 torch::Tensor create_target_with_mask(const cv::Mat& img) {
 
     const int H = img.rows;
     const int W = img.cols;
 
     torch::Tensor edges = slic_edge_costs(img);
-    auto E = edges.accessor<float, 3>();
 
     torch::Tensor out = torch::zeros({6, H, W}, torch::TensorOptions().dtype(torch::kFloat32));
-    auto A = out.accessor<float, 3>();
 
-    // sigma fixed everywhere (mask will exclude borders)
-    for (int y = 0; y < H; ++y) {
-        for (int x = 0; x < W; ++x) {
-            if (x + 1 < W) {
-                A[0][y][x] = E[0][y][x];    // mu horizontal
-                A[1][y][x] = 0.1f;          // sigma horizontal
-                A[4][y][x] = 1.0f;          // mask
-            }
-            if (y + 1 < H) {
-                A[2][y][x] = E[1][y][x];    // mu vertical
-                A[3][y][x] = 0.1f;          // sigma vertical
-                A[5][y][x] = 1.0f;          // mask
-            }
-        }
-    }
+    // mu
+    out.index_put_({0, torch::indexing::Slice(), torch::indexing::Slice(0, W-1)},
+                    edges.index({0, torch::indexing::Slice(), torch::indexing::Slice(0, W-1)}));
+    out.index_put_({2, torch::indexing::Slice(0, H-1), torch::indexing::Slice()},
+                    edges.index({1, torch::indexing::Slice(0, H-1), torch::indexing::Slice()}));
 
-    /*for (int y = 0; y < H; ++y) {
-        for (int x = 0; x < W; ++x) {
-            const cv::Vec3f& p0 = img.at<cv::Vec3f>(y, x);
-            const float L0 = luma_bgr01(p0);
+    // sigma constants
+    out.index_put_({1, torch::indexing::Slice(), torch::indexing::Slice(0, W-1)}, 0.1f);
+    out.index_put_({3, torch::indexing::Slice(0, H-1), torch::indexing::Slice()}, 0.1f);
 
-            // right neighbor
-            if (x + 1 < W) {
-                const cv::Vec3f& p1 = img.at<cv::Vec3f>(y, x + 1);
-                const float L1 = luma_bgr01(p1);
-
-                float d = L1 - L0;                 // signed, in [-1,1]
-                d = std::max(-1.0f, std::min(1.0f, d));
-
-                A[0][y][x] = d;
-                A[4][y][x] = 1.0f;                 // mask_right
-            }
-
-            // down neighbor
-            if (y + 1 < H) {
-                const cv::Vec3f& p1 = img.at<cv::Vec3f>(y + 1, x);
-                const float L1 = luma_bgr01(p1);
-
-                float d = L1 - L0;
-                d = std::max(-1.0f, std::min(1.0f, d));
-
-                A[2][y][x] = d;
-                A[5][y][x] = 1.0f;                 // mask_down
-            }
-        }
-    }*/
+    // masks
+    out.index_put_({4, torch::indexing::Slice(), torch::indexing::Slice(0, W-1)}, 1.0f);
+    out.index_put_({5, torch::indexing::Slice(0, H-1), torch::indexing::Slice()}, 1.0f);
 
     return out;
 }
@@ -133,15 +93,18 @@ struct EdgeDataset : torch::data::Dataset<EdgeDataset> {
         // Input tensor: [3,H,W]
         auto input = torch::from_blob(
             img_f.data, {img_f.rows, img_f.cols, 3}, torch::kFloat32
-        ).permute({2, 0, 1}).clone();
+        ).permute({2, 0, 1}).contiguous().clone();
 
         torch::Tensor target;
         if (create_targets) {
             target = create_target_with_mask(img); // [6,H,W]
         } else {
             // file size of image
-            target = torch::tensor({(int)file_size_bytes(image_paths[idx])}, torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU));
+            target = torch::tensor({static_cast<int64_t>(file_size_bytes(image_paths[idx]))}, torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU));
         }
+
+        input = input.pin_memory();
+        target = target.pin_memory();
 
         return {input, target};
     }
