@@ -89,6 +89,9 @@ int main()
     auto i_device = torch::tensor(i_idx, torch::TensorOptions().dtype(torch::kInt32).device(device));
     auto j_device = torch::tensor(j_idx, torch::TensorOptions().dtype(torch::kInt32).device(device));
 
+    // -------------------------
+    // Train dataset loader
+    // -------------------------
     auto image_paths = find_image_files_recursively(DATASET_DIR, IMAGE_FORMAT);
 
     auto train_dataset = EdgeDataset(image_paths, /*create_targets=*/false)
@@ -103,6 +106,24 @@ int main()
             .workers(4)
             .drop_last(true)
     );
+
+    // -------------------------
+    // Val dataset loader
+    // -------------------------
+    auto val_image_paths = find_image_files_recursively(VAL_DATASET_DIR, IMAGE_FORMAT);
+
+    auto val_dataset = EdgeDataset(val_image_paths, /*create_targets=*/false)
+        .map(torch::data::transforms::Stack<>());
+
+    auto val_loader = torch::data::make_data_loader(
+        std::move(val_dataset),
+        torch::data::DataLoaderOptions()
+            .batch_size(BATCH_SIZE)
+            .workers(2)
+            .drop_last(false)
+    );
+
+    const auto run_id = std::to_string(std::time(nullptr));
 
     for (int epoch = 0; epoch < 50; ++epoch) {
         model->train();
@@ -170,13 +191,40 @@ int main()
                             << " baseline=" << bval
                             << std::endl;
             }
-            if (batch_count % 1000)
-                torch::save(model, "fcn_training_" + std::to_string(std::time(0)) + ".pt");
+            if (batch_count % 1000) {
+                model->eval();
+                torch::NoGradGuard ng;
+
+                double rsum = 0.0;
+                int n = 0;
+
+                for (auto& batch : *val_loader) {
+                    auto images = batch.data.to(device, /*non_blocking=*/true);
+                    auto image_sizes = batch.target.to(device, /*non_blocking=*/true);
+
+                    auto out = model->forward(images);
+                    auto flat = flatten_grid_edges(out);
+                    auto mu = mu_scale * torch::tanh(flat.select(1,0));
+
+                    auto edge_costs = mu.to(torch::kFloat32).contiguous();
+                    torch::Tensor node_labels = rama_torch_batched(i_device, j_device, edge_costs);
+                    rewards = compute_rewards_batched(images, node_labels, image_sizes);
+
+                    rsum += rewards.sum().item<double>();
+                    n += images.size(0);
+
+                    if (n >= 64) break; // keep eval cheap
+                }
+
+                std::cout << "Eval reward mean=" << (rsum / std::max(1,n)) << "\n";
+                torch::save(model, "fcn_training_" + run_id + ".pt");
+                model->train();
+            }
         }
     }
 
 
-    torch::save(model, "fcn_" + std::to_string(std::time(0)) + ".pt");
+    torch::save(model, "fcn_training_" + run_id + "_final.pt");
 
     return 0;
 }
