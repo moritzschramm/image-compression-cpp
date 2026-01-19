@@ -1,5 +1,6 @@
 #pragma once
-#include <torch/extension.h>
+#include <torch/torch.h>
+//#include <torch/extension.h>
 
 torch::Tensor compute_rewards_batched(
     const torch::Tensor& images_bchw_f32,
@@ -13,4 +14,4 @@ torch::Tensor compute_rewards_batched(
     double overhead_base = 9.308622,
     bool adaptive_filter = true,
     double lambda = 0.1
-)
+);

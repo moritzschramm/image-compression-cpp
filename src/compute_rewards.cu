@@ -1,16 +1,23 @@
-#include <torch/extension.h>
+#include <torch/torch.h>
 #include <ATen/ATen.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAStream.h>
 #include <cuda_runtime.h>
 
 #include "segment_stats.cuh"
-#include "png_size_estimator_masked.cuh"
+#include "png_size_estimator.cuh"
 
 #ifndef CUDA_CHECK
 #define CUDA_CHECK(x) do { cudaError_t err = (x); if (err != cudaSuccess) { \
   throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(err)); } } while(0)
 #endif
+
+__device__ __forceinline__ uint8_t f32_to_u8(float v) {
+    v = v < 0.f ? 0.f : (v > 255.f ? 255.f : v);
+    int iv = (int)lrintf(v);
+    iv = iv < 0 ? 0 : (iv > 255 ? 255 : iv);
+    return (uint8_t)iv;
+}
 
 // Convert float32 [B,3,H,W] -> uint8 [B,H,W,4] with alpha=255
 __global__ void chw3_f32_to_hwc4_u8_kernel(
@@ -33,18 +40,9 @@ __global__ void chw3_f32_to_hwc4_u8_kernel(
     const float v1 = in_chw3[base_c + 1LL * H * W];
     const float v2 = in_chw3[base_c + 2LL * H * W];
 
-    auto to_u8 = [](float v) __device__ -> uint8_t {
-        // clamp + round to nearest int
-        v *= 255.f;
-        v = v < 0.f ? 0.f : (v > 255.f ? 255.f : v);
-        int iv = (int)lrintf(v);
-        iv = iv < 0 ? 0 : (iv > 255 ? 255 : iv);
-        return (uint8_t)iv;
-    };
-
-    const uint8_t c0 = to_u8(v0);
-    const uint8_t c1 = to_u8(v1);
-    const uint8_t c2 = to_u8(v2);
+    const uint8_t c0 = f32_to_u8(v0);
+    const uint8_t c1 = f32_to_u8(v1);
+    const uint8_t c2 = f32_to_u8(v2);
 
     // output HWC4: (((b*H + y)*W + x)*4 + c)
     const int64_t out = (((int64_t)b * H + y) * W + x) * 4;

@@ -9,6 +9,11 @@
 #include "rama_wrapper.cuh"
 #include "compute_rewards.cuh"
 
+#ifdef torch
+#undef torch
+#endif
+
+
 torch::Tensor flatten_grid_edges(const torch::Tensor& x)
 {
     // x: [B, 4, H, W]
@@ -71,7 +76,7 @@ int main()
     const auto device = torch::kCUDA;
 
     EdgeUNet model;
-    torch::load(model, "fcn_pretrained_canny_1768555972_epoch_1.pt");
+    torch::load(model, "fcn_pretrained_1768820146_best.pt");
 
     model->to(device);
 
@@ -81,10 +86,13 @@ int main()
 
     const double entropy_coef = 1e-4;
 
+    const int H = 256;
+    const int W = 256;
+
     std::vector<int32_t> i_idx;
     std::vector<int32_t> j_idx;
 
-    build_rama_indices(256, 256, i_idx, j_idx); // assuming height and width of 256x256
+    build_rama_indices(H, W, i_idx, j_idx); // assuming height and width of 256x256
 
     auto i_device = torch::tensor(i_idx, torch::TensorOptions().dtype(torch::kInt32).device(device));
     auto j_device = torch::tensor(j_idx, torch::TensorOptions().dtype(torch::kInt32).device(device));
@@ -111,6 +119,8 @@ int main()
     // Val dataset loader
     // -------------------------
     auto val_image_paths = find_image_files_recursively(VAL_DATASET_DIR, IMAGE_FORMAT);
+
+    if (val_image_paths.size() > 64) val_image_paths.resize(64);
 
     auto val_dataset = EdgeDataset(val_image_paths, /*create_targets=*/false)
         .map(torch::data::transforms::Stack<>());
@@ -159,6 +169,10 @@ int main()
 
                 auto edge_costs = samp.w.detach().to(torch::kFloat32).contiguous();
                 torch::Tensor node_labels = rama_torch_batched(i_device, j_device, edge_costs);
+
+                const int64_t B = node_labels.size(0);
+                node_labels = node_labels.view({B, H, W}).contiguous();
+
                 rewards = compute_rewards_batched(images, node_labels, image_sizes);
             }
 
@@ -190,8 +204,6 @@ int main()
                             << " Rmean=" << rmean
                             << " baseline=" << bval
                             << std::endl;
-            }
-            if (batch_count % 1000) {
                 model->eval();
                 torch::NoGradGuard ng;
 
@@ -208,12 +220,12 @@ int main()
 
                     auto edge_costs = mu.to(torch::kFloat32).contiguous();
                     torch::Tensor node_labels = rama_torch_batched(i_device, j_device, edge_costs);
+                    const int64_t B = node_labels.size(0);
+                    node_labels = node_labels.view({B, H, W}).contiguous();
                     rewards = compute_rewards_batched(images, node_labels, image_sizes);
 
                     rsum += rewards.sum().item<double>();
                     n += images.size(0);
-
-                    if (n >= 64) break; // keep eval cheap
                 }
 
                 std::cout << "Eval reward mean=" << (rsum / std::max(1,n)) << "\n";

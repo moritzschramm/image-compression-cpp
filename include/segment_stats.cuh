@@ -1,5 +1,6 @@
 #pragma once
-#include <torch/extension.h>
+#include <torch/torch.h>
+//#include <torch/extension.h>
 
 // bboxes: int32 [K,4] = (x0,y0,x1,y1), counts: int32 [K]
 void compute_counts_bboxes_from_compact_labels_cuda(

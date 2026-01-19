@@ -1,5 +1,5 @@
 #pragma once
-#include <torch/extension.h>
+#include <torch/torch.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAStream.h>
 #include <cuda_runtime.h>

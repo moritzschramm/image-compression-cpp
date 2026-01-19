@@ -15,7 +15,7 @@ const int HEIGHT = 256;
  */
 int main()
 {
-    auto image_paths = find_image_files_recursively(DATASET_DIR, SOURCE_FORMAT);
+    auto image_paths = find_image_files_recursively(TEST_DATASET_DIR, SOURCE_FORMAT);
 
     std::atomic<size_t> index{0};
     const size_t N = image_paths.size();

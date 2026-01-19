@@ -11,3 +11,8 @@ torch::Tensor rama_torch(
     const torch::Tensor& _i,
     const torch::Tensor& _j,
     const torch::Tensor& _costs);
+
+torch::Tensor rama_torch_batched(
+    const torch::Tensor& _i,
+    const torch::Tensor& _j,
+    const torch::Tensor& _costs_be);

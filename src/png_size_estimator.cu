@@ -1,5 +1,47 @@
-#include "png_size_estimator_masked.cuh"
+#include "png_size_estimator.cuh"
 #include <cmath>
+
+__global__ void skip_check_kernel(const int32_t* counts, int k, int32_t mp, double* out) {
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        if (counts[k] < mp) *out = 0.0;
+    }
+}
+
+__device__ __forceinline__ void compute_size_device(
+    double* out, double Hbar,
+    unsigned long long match_symbols,
+    unsigned long long match_count,
+    unsigned long long match_len_sum,
+    size_t N, int L_min,
+    double beta, double b_match_token, double gamma,
+    double overhead_base, int height)
+{
+    double f_match = (N > 0 && match_symbols > 0) ? (double)match_symbols / (double)N : 0.0;
+    double L_bar   = (match_count > 0) ? (double)match_len_sum / (double)match_count : (double)L_min;
+
+    double b_lit   = Hbar + beta;
+    double b_match = (b_match_token / L_bar) + gamma;
+    double b_data  = (1.0 - f_match) * b_lit + f_match * b_match;
+
+    double S_overhead = overhead_base + (double)height;
+    *out = S_overhead + ((double)N * b_data) / 8.0;
+}
+
+__global__ void finalize_size_kernel(
+    double* out,
+    const double* Hbar,
+    const unsigned long long* ms,
+    const unsigned long long* mc,
+    const unsigned long long* mls,
+    size_t N, int L_min,
+    double beta, double b_match_token, double gamma,
+    double overhead_base, int height)
+{
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        compute_size_device(out, *Hbar, *ms, *mc, *mls, N, L_min, beta, b_match_token, gamma, overhead_base, height);
+    }
+}
+
 
 // Paeth predictor (device)
 __device__ inline int paeth_predictor(int a, int b, int c) {
@@ -459,12 +501,8 @@ void estimate_png_size_masked_segment_to_output(
     auto out_ptr = out_dev;
     const int64_t k = seg_id_k;
     const int32_t mp = min_pixels;
-    auto skip_check = [] __global__ (const int32_t* counts, int64_t k, int32_t mp, double* out) {
-        if (threadIdx.x == 0 && blockIdx.x == 0) {
-            if (counts[(int)k] < mp) *out = 0.0;
-        }
-    };
-    skip_check<<<1,1,0,stream>>>(counts_ptr, k, mp, out_ptr);
+
+    skip_check_kernel<<<1,1,0,stream>>>(counts_ptr, (int)k, mp, out_ptr);
     CUDA_CHECK(cudaGetLastError());
 
     const size_t N = (size_t)w * (size_t)h * (size_t)channels;
@@ -540,33 +578,14 @@ void estimate_png_size_masked_segment_to_output(
         (unsigned long long*)ws.match_len_sum_u64.data_ptr());
     CUDA_CHECK(cudaGetLastError());
 
-    // compute size (GPU) -> out_dev
-    auto launch_size = [] __global__ (
-        double* out,
-        const double* Hbar,
-        const unsigned long long* ms,
-        const unsigned long long* mc,
-        const unsigned long long* mls,
-        size_t N,
-        int L_min,
-        double beta,
-        double b_match_token,
-        double gamma,
-        double overhead_base,
-        int height)
-    {
-        if (threadIdx.x == 0 && blockIdx.x == 0) {
-            compute_size_kernel(out, *Hbar, *ms, *mc, *mls, N, L_min, beta, b_match_token, gamma, overhead_base, height);
-        }
-    };
-
-    launch_size<<<1, 1, 0, stream>>>(
+    finalize_size_kernel<<<1,1,0,stream>>>(
         out_dev,
         (const double*)ws.Hbar_f64.data_ptr(),
         (const unsigned long long*)ws.match_symbols_u64.data_ptr(),
         (const unsigned long long*)ws.match_count_u64.data_ptr(),
         (const unsigned long long*)ws.match_len_sum_u64.data_ptr(),
         N, L_min,
-        (double)beta, (double)b_match_token, (double)gamma, overhead_base, h);
+        (double)beta, (double)b_match_token, (double)gamma,
+        overhead_base, h);
     CUDA_CHECK(cudaGetLastError());
 }

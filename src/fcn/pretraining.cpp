@@ -37,6 +37,8 @@ int main()
     // -------------------------
     auto val_image_paths = find_image_files_recursively(VAL_DATASET_DIR, IMAGE_FORMAT);
 
+    if (val_image_paths.size() > 100) val_image_paths.resize(100);
+
     auto val_dataset = EdgeDataset(val_image_paths, /*create_targets=*/true)
         .map(torch::data::transforms::Stack<>());
 
@@ -133,7 +135,7 @@ int main()
                 torch::NoGradGuard ng;
 
                 const double tau = 0.05;
-                auto [c_cnt, v_cnt] = sign_counts_02(outputs, targets, tau);
+                auto [c_cnt, v_cnt] = sign_counts(outputs, targets, tau);
                 double sign_accuracy = (v_cnt > 0.0) ? (c_cnt / v_cnt) : 0.0;
 
                 auto t = targets.index({Slice(), Slice(0, 4), Slice(), Slice()}).detach();
@@ -147,6 +149,52 @@ int main()
                           << " mean=" << t.mean().item<double>()
                           << " std=" << t.std().item<double>()
                           << std::endl;
+          
+                // =========================
+                // Validation
+                // =========================
+                model->eval();
+
+                double val_num_sum = 0.0;
+                double val_den_sum = 0.0;
+                double val_correct_sum = 0.0;
+                double val_valid_sum = 0.0;
+
+                for (auto& batch : *val_loader) {
+                    auto imgs = batch.data.to(device, /*non_blocking=*/true);
+                    auto targets = batch.target.to(device, /*non_blocking=*/true);
+
+                    auto outputs = model->forward(imgs);
+
+                    auto [target, mask] = make_target_and_mask(targets);
+                    mask = mask.to(outputs.dtype());
+
+                    auto abs_err = (outputs - target).abs();
+                    auto num = (abs_err * mask).sum();
+                    auto den = mask.sum().clamp_min(1.0);
+
+                    val_num_sum += num.item<double>();
+                    val_den_sum += den.item<double>();
+
+                    auto [c_cnt, v_cnt] = sign_counts(outputs, targets, tau);
+                    val_correct_sum += c_cnt;
+                    val_valid_sum += v_cnt;
+                }
+                model->train();
+
+                const double val_loss = val_num_sum / std::max(1.0, val_den_sum);
+                const double val_sign_acc = (val_valid_sum > 0.0) ? (val_correct_sum / val_valid_sum) : 0.0;
+
+                std::cout << "Epoch [" << epoch << "/" << epochs
+                        << "] Val Loss: " << val_loss
+                        << " Val Sign accuracy: " << val_sign_acc
+                        << std::endl;
+
+                if (val_loss < best_val_loss) {
+                    best_val_loss = val_loss;
+                    torch::save(model, "fcn_pretrained_" + run_id + "_best.pt");
+                    std::cout << "New best val loss: " << best_val_loss << std::endl;
+                }
             }
         }
 
@@ -156,57 +204,9 @@ int main()
                   << std::endl;
 
         // =========================
-        // Validation
-        // =========================
-        model->eval();
-        torch::NoGradGuard ng;
-
-        double val_num_sum = 0.0;
-        double val_den_sum = 0.0;
-        double val_correct_sum = 0.0;
-        double val_valid_sum = 0.0;
-
-        const double tau = 0.05;
-
-        for (auto& batch : *val_loader) {
-            auto imgs = batch.data.to(device, /*non_blocking=*/true);
-            auto targets = batch.target.to(device, /*non_blocking=*/true);
-
-            auto outputs = model->forward(imgs);
-
-            auto [target, mask] = make_target_and_mask(targets);
-            mask = mask.to(outputs.dtype());
-
-            auto abs_err = (outputs - target).abs();
-            auto num = (abs_err * mask).sum();
-            auto den = mask.sum().clamp_min(1.0);
-
-            val_num_sum += num.item<double>();
-            val_den_sum += den.item<double>();
-
-            auto [c_cnt, v_cnt] = sign_counts_02(outputs, targets, tau);
-            val_correct_sum += c_cnt;
-            val_valid_sum += v_cnt;
-        }
-
-        const double val_loss = val_num_sum / std::max(1.0, val_den_sum);
-        const double val_sign_acc = (val_valid_sum > 0.0) ? (val_correct_sum / val_valid_sum) : 0.0;
-
-        std::cout << "Epoch [" << epoch << "/" << epochs
-                  << "] Val Loss: " << val_loss
-                  << " Val Sign accuracy: " << val_sign_acc
-                  << std::endl;
-
-        // =========================
         // Checkpointing
         // =========================
         torch::save(model, "fcn_pretrained_" + run_id + "_epoch_" + std::to_string(epoch) + ".pt");
-
-        if (val_loss < best_val_loss) {
-            best_val_loss = val_loss;
-            torch::save(model, "fcn_pretrained_" + run_id + "_best.pt");
-            std::cout << "New best val loss: " << best_val_loss << std::endl;
-        }
     }
 
     torch::save(model, "fcn_pretrained_" + run_id + "_final.pt");
