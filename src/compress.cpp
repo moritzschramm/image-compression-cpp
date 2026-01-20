@@ -98,11 +98,6 @@ int main()
 
     std::cout << "Found " << std::to_string(paths.size()) << " images" << std::endl;
 
-    std::vector<int32_t> i_idx;
-    std::vector<int32_t> j_idx;
-
-    build_rama_indices(256, 256, i_idx, j_idx); // assuming height and width of 256x256
-
     EdgeUNet model;
     torch::load(model, "fcn_trained.pt");
     model->to(device);
@@ -119,13 +114,17 @@ int main()
         auto img_f = to_f32c3_01_or_throw(image);
 
         // Input tensor: [3,H,W]
-        auto input = torch::from_blob(
-            img_f.data, {img_f.rows, img_f.cols, 3}, torch::kFloat32
-        ).permute({2, 0, 1}).clone().to(device);
+        auto input = torch::from_blob(img_f.data, {img_f.rows, img_f.cols, 3}, torch::kFloat32)
+            .permute({2, 0, 1})
+            .unsqueeze(0)
+            .contiguous()
+            .clone()
+            .to(device);
 
         torch::Tensor output = model->forward(input);
 
         auto flat = flatten_grid_edges(output);
+        double mu_scale = 2.0;
         auto mu = mu_scale * torch::tanh(flat.select(1,0));
 
         std::vector<int32_t> i_idx;
@@ -136,11 +135,13 @@ int main()
         auto i_device = torch::tensor(i_idx, torch::TensorOptions().dtype(torch::kInt32).device(device));
         auto j_device = torch::tensor(j_idx, torch::TensorOptions().dtype(torch::kInt32).device(device));
 
-        torch::Tensor node_labels = rama_torch(i_device, j_device, mu.contiguous());
+        torch::Tensor node_labels = rama_torch_batched(i_device, j_device, mu.contiguous());
 
-        node_labels = node_labels.to(torch::kCPU);
+        const int64_t B = node_labels.size(0);
+        node_labels = node_labels.view({B, image.rows, image.cols}).contiguous();
+        node_labels = node_labels.squeeze(0).to(torch::kCPU);
 
-        write_slices(input, node_labels, RESULTS_DIR, path.stem());
+        write_slices(image, node_labels, RESULTS_DIR, path.stem());
 
         break;
     }
