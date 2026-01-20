@@ -37,7 +37,7 @@ int main()
     // -------------------------
     auto val_image_paths = find_image_files_recursively(VAL_DATASET_DIR, IMAGE_FORMAT);
 
-    if (val_image_paths.size() > 100) val_image_paths.resize(100);
+    if (val_image_paths.size() > 200) val_image_paths.resize(200);
 
     auto val_dataset = EdgeDataset(val_image_paths, /*create_targets=*/true)
         .map(torch::data::transforms::Stack<>());
@@ -116,14 +116,88 @@ int main()
 
             optimizer.zero_grad();
 
-            auto outputs = model->forward(imgs);
+            auto outputs = model->forward(imgs);                 // [B,6,H,W]
 
-            auto [target, mask] = make_target_and_mask(targets);
-            mask = mask.to(outputs.dtype());
+            // Predictions
+            auto p_cost_r = outputs.select(1, 0); // [B,H,W]
+            auto p_sig_r  = outputs.select(1, 1);
+            auto p_cost_d = outputs.select(1, 2);
+            auto p_sig_d  = outputs.select(1, 3);
 
-            auto abs_err = (outputs - target).abs();
-            auto denom = mask.sum().clamp_min(1.0);
-            auto loss = (abs_err * mask).sum() / denom;
+            // Targets + masks
+            auto t_cost_r = targets.select(1, 0).to(outputs.dtype());
+            auto t_sig_r  = targets.select(1, 1).to(outputs.dtype());
+            auto t_cost_d = targets.select(1, 2).to(outputs.dtype());
+            auto t_sig_d  = targets.select(1, 3).to(outputs.dtype());
+
+            auto m_r = targets.select(1, 4).to(outputs.dtype());   // [B,H,W] in {0,1}
+            auto m_d = targets.select(1, 5).to(outputs.dtype());   // [B,H,W] in {0,1}
+
+            // weighted BCE sign loss for a single cost channel
+            auto sign_loss_weighted_bce = [&](const torch::Tensor& pred_cost,
+                                            const torch::Tensor& tgt_cost,
+                                            const torch::Tensor& mask01) {
+                auto valid = mask01 > 0; // bool
+
+                // y=1 means "negative target"
+                auto y = ((tgt_cost < 0) & valid).to(pred_cost.dtype());
+
+                // logits = -pred so pred<0 => predicts y=1
+                auto logits = -pred_cost;
+
+                auto n_pos = y.sum().to(torch::kFloat32);           // count of negatives
+                auto n_all = valid.sum().to(torch::kFloat32);
+                auto n_neg = (n_all - n_pos);
+
+                auto pos_weight = ((n_neg + 1e-6f) / (n_pos + 1e-6f))
+                                    .clamp_max(20.0f)
+                                    .to(pred_cost.device());
+
+                auto bce = torch::binary_cross_entropy_with_logits(
+                    logits, y, /*weight=*/{}, /*pos_weight=*/pos_weight, torch::Reduction::None
+                );
+
+                auto denom = mask01.sum().clamp_min(1.0);
+                return (bce * mask01).sum() / denom;
+            };
+
+            // magnitude regression for costs
+            auto cost_reg = [&](const torch::Tensor& pred_cost,
+                                const torch::Tensor& tgt_cost,
+                                const torch::Tensor& mask01) {
+                auto reg = torch::smooth_l1_loss(pred_cost, tgt_cost, torch::Reduction::None);
+                auto denom = mask01.sum().clamp_min(1.0);
+                return (reg * mask01).sum() / denom;
+            };
+
+            // regression for sigma (to 0.1)
+            auto sigma_reg = [&](const torch::Tensor& pred_sig,
+                                const torch::Tensor& tgt_sig,
+                                const torch::Tensor& mask01) {
+                auto reg = torch::smooth_l1_loss(pred_sig, tgt_sig, torch::Reduction::None);
+                auto denom = mask01.sum().clamp_min(1.0);
+                return (reg * mask01).sum() / denom;
+            };
+
+            // Compute losses
+            auto loss_sign_r = sign_loss_weighted_bce(p_cost_r, t_cost_r, m_r);
+            auto loss_sign_d = sign_loss_weighted_bce(p_cost_d, t_cost_d, m_d);
+
+            auto loss_reg_r  = cost_reg(p_cost_r, t_cost_r, m_r);
+            auto loss_reg_d  = cost_reg(p_cost_d, t_cost_d, m_d);
+
+            auto loss_sig_r  = sigma_reg(p_sig_r,  t_sig_r,  m_r);
+            auto loss_sig_d  = sigma_reg(p_sig_d,  t_sig_d,  m_d);
+
+            // Combine
+            double w_sign = 1.0;
+            double w_reg  = 0.2;
+            double w_sig  = 0.2;
+
+            auto loss = w_sign * 0.5 * (loss_sign_r + loss_sign_d)
+                    + w_reg  * 0.5 * (loss_reg_r  + loss_reg_d)
+                    + w_sig  * 0.5 * (loss_sig_r  + loss_sig_d);
+
 
             loss.backward();
             optimizer.step();
@@ -131,7 +205,7 @@ int main()
             train_loss_sum += loss.item<double>();
             train_batches++;
 
-            if (batch_count % 500 == 0 || batch_count == 1) {
+            if (batch_count % 100 == 0 || batch_count == 1) {
                 torch::NoGradGuard ng;
 
                 const double tau = 0.05;
