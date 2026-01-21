@@ -58,7 +58,7 @@ torch::Tensor slic_edge_costs(
         const int* row = labels.ptr<int>(y);
         int64_t base = static_cast<int64_t>(y) * W;
         for (int x = 0; x < W - 1; ++x) {
-            const float v = (row[x] == row[x + 1]) ? 1.0f : -1.0f;
+            const float v = (row[x] == row[x + 1]) ? 1.0f : 0.0f;
             e[0 * plane + base + x] = v;
         }
         // last column remains 0 (ignored)
@@ -70,7 +70,7 @@ torch::Tensor slic_edge_costs(
         const int* row1 = labels.ptr<int>(y + 1);
         int64_t base = static_cast<int64_t>(y) * W;
         for (int x = 0; x < W; ++x) {
-            const float v = (row0[x] == row1[x]) ? 1.0f : -1.0f;
+            const float v = (row0[x] == row1[x]) ? 1.0f : 0.0f;
             e[1 * plane + base + x] = v;
         }
     }

@@ -9,12 +9,10 @@
 #include "slic_edge.hpp"
 
 // Target layout (C,H,W):
-// 0: cost_right   (learned)  [-1,1]
-// 1: sigma_right  (fixed)    0.1
-// 2: cost_down    (learned)  [-1,1]
-// 3: sigma_down   (fixed)    0.1
-// 4: mask_right   (1 if x+1<W else 0)
-// 5: mask_down    (1 if y+1<H else 0)
+// 0: cost_right   (learned)  {0,1}
+// 1: cost_down    (learned)  {0,1}
+// 2: mask_right   (1 if x+1<W else 0)
+// 3: mask_down    (1 if y+1<H else 0)
 
 torch::Tensor create_target_with_mask(const cv::Mat& img) {
 
@@ -23,21 +21,17 @@ torch::Tensor create_target_with_mask(const cv::Mat& img) {
 
     torch::Tensor edges = slic_edge_costs(img);
 
-    torch::Tensor out = torch::zeros({6, H, W}, torch::TensorOptions().dtype(torch::kFloat32));
+    torch::Tensor out = torch::zeros({4, H, W}, torch::TensorOptions().dtype(torch::kFloat32));
 
-    // mu
+    // cost
     out.index_put_({0, torch::indexing::Slice(), torch::indexing::Slice(0, W-1)},
                     edges.index({0, torch::indexing::Slice(), torch::indexing::Slice(0, W-1)}));
-    out.index_put_({2, torch::indexing::Slice(0, H-1), torch::indexing::Slice()},
+    out.index_put_({1, torch::indexing::Slice(0, H-1), torch::indexing::Slice()},
                     edges.index({1, torch::indexing::Slice(0, H-1), torch::indexing::Slice()}));
 
-    // sigma constants
-    out.index_put_({1, torch::indexing::Slice(), torch::indexing::Slice(0, W-1)}, 0.1f);
-    out.index_put_({3, torch::indexing::Slice(0, H-1), torch::indexing::Slice()}, 0.1f);
-
     // masks
-    out.index_put_({4, torch::indexing::Slice(), torch::indexing::Slice(0, W-1)}, 1.0f);
-    out.index_put_({5, torch::indexing::Slice(0, H-1), torch::indexing::Slice()}, 1.0f);
+    out.index_put_({2, torch::indexing::Slice(), torch::indexing::Slice(0, W-1)}, 1.0f);
+    out.index_put_({3, torch::indexing::Slice(0, H-1), torch::indexing::Slice()}, 1.0f);
 
     return out;
 }
