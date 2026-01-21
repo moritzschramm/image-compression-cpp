@@ -8,10 +8,129 @@
 #include "fcn/EdgeUNet.h"
 
 
+struct BatchStats {
+    torch::Tensor loss;      // scalar
+    torch::Tensor valid_w;   // scalar weight for averaging (number of valid pixels)
+    int64_t correct = 0;
+    int64_t valid = 0;
+};
+
+BatchStats compute_loss_and_signacc(
+    const torch::Tensor& outputs,   // [B,6,H,W]
+    const torch::Tensor& targets,   // [B,6,H,W]
+    const torch::Tensor& pos_weight, // scalar tensor on same device/dtype float
+    double w_sign = 1.0,
+    double w_reg  = 0.3,
+    double w_sig  = 0.1
+) {
+    // Predictions
+    auto p_cost_r = outputs.select(1, 0); // [B,H,W]
+    auto p_sig_r  = outputs.select(1, 1);
+    auto p_cost_d = outputs.select(1, 2);
+    auto p_sig_d  = outputs.select(1, 3);
+
+    // Targets + masks
+    auto t_cost_r = targets.select(1, 0).to(outputs.dtype());
+    auto t_sig_r  = targets.select(1, 1).to(outputs.dtype());
+    auto t_cost_d = targets.select(1, 2).to(outputs.dtype());
+    auto t_sig_d  = targets.select(1, 3).to(outputs.dtype());
+    auto m_r      = targets.select(1, 4).to(outputs.dtype()); // {0,1}
+    auto m_d      = targets.select(1, 5).to(outputs.dtype()); // {0,1}
+
+    auto sign_loss_weighted_bce = [&](const torch::Tensor& pred_cost,
+                                      const torch::Tensor& tgt_cost,
+                                      const torch::Tensor& mask01) {
+        auto valid = mask01 > 0;
+        auto y = ((tgt_cost < 0) & valid).to(pred_cost.dtype()); // 1 = negative target
+        auto logits = -pred_cost;
+
+        auto bce = torch::binary_cross_entropy_with_logits(
+            logits, y, /*weight=*/{}, /*pos_weight=*/pos_weight, torch::Reduction::None
+        );
+
+        auto denom = mask01.sum().clamp_min(1.0);
+        return (bce * mask01).sum() / denom;
+    };
+
+    auto cost_reg = [&](const torch::Tensor& pred_cost,
+                        const torch::Tensor& tgt_cost,
+                        const torch::Tensor& mask01) {
+        auto reg = torch::smooth_l1_loss(pred_cost, tgt_cost, torch::Reduction::None);
+        auto denom = mask01.sum().clamp_min(1.0);
+        return (reg * mask01).sum() / denom;
+    };
+
+    auto sigma_reg = [&](const torch::Tensor& pred_sig,
+                         const torch::Tensor& tgt_sig,
+                         const torch::Tensor& mask01) {
+        auto reg = torch::smooth_l1_loss(pred_sig, tgt_sig, torch::Reduction::None);
+        auto denom = mask01.sum().clamp_min(1.0);
+        return (reg * mask01).sum() / denom;
+    };
+
+    // Loss components
+    auto loss_sign = 0.5 * (sign_loss_weighted_bce(p_cost_r, t_cost_r, m_r) +
+                            sign_loss_weighted_bce(p_cost_d, t_cost_d, m_d));
+
+    auto loss_regv = 0.5 * (cost_reg(p_cost_r, t_cost_r, m_r) +
+                            cost_reg(p_cost_d, t_cost_d, m_d));
+
+    auto loss_sigv = 0.5 * (sigma_reg(p_sig_r, t_sig_r, m_r) +
+                            sigma_reg(p_sig_d, t_sig_d, m_d));
+
+    auto loss = w_sign * loss_sign + w_reg * loss_regv + w_sig * loss_sigv;
+
+    // Sign accuracy on cost channels only, masked
+    auto acc_one = [&](const torch::Tensor& pred_cost,
+                       const torch::Tensor& tgt_cost,
+                       const torch::Tensor& mask01,
+                       int64_t& correct,
+                       int64_t& valid_cnt) {
+        auto valid = mask01 > 0;
+        auto pred_pos = pred_cost > 0;
+        auto pred_neg = pred_cost < 0;
+        auto tgt_pos  = tgt_cost  > 0;
+        auto tgt_neg  = tgt_cost  < 0;
+
+        auto corr = ((pred_pos & tgt_pos) | (pred_neg & tgt_neg)) & valid;
+        correct   += corr.sum().item<int64_t>();
+        valid_cnt += valid.sum().item<int64_t>();
+    };
+
+    int64_t correct = 0, valid_cnt = 0;
+    acc_one(p_cost_r, t_cost_r, m_r, correct, valid_cnt);
+    acc_one(p_cost_d, t_cost_d, m_d, correct, valid_cnt);
+
+    // Weight for averaging across batches (valid pixels in both directions)
+    auto valid_w = 0.5 * (m_r.sum() + m_d.sum()); // scalar tensor
+
+    return BatchStats{loss, valid_w, correct, valid_cnt};
+}
+
+
+double compute_global_pos_weight(torch::data::DataLoader<EdgeDataset>& loader, torch::Device device) {
+    torch::NoGradGuard ng;
+    double n_neg = 0.0, n_pos = 0.0;
+
+    for (auto& batch : loader) {
+        auto tgt = batch.target.to(device);
+
+        auto t_cost_r = tgt.select(1,0);
+        auto t_cost_d = tgt.select(1,2);
+        auto m_r = tgt.select(1,4) > 0;
+        auto m_d = tgt.select(1,5) > 0;
+
+        n_neg += ((t_cost_r < 0) & m_r).sum().item<double>();
+        n_pos += ((t_cost_r > 0) & m_r).sum().item<double>();
+        n_neg += ((t_cost_d < 0) & m_d).sum().item<double>();
+        n_pos += ((t_cost_d > 0) & m_d).sum().item<double>();
+    }
+    return (n_pos + 1e-6) / (n_neg + 1e-6);
+}
+
+
 int main()
 {
-    torch::manual_seed(0);
-
     const auto device = torch::kCUDA;
 
     // -------------------------
@@ -63,37 +182,11 @@ int main()
 
     using torch::indexing::Slice;
 
-    // Build [B,4,H,W] target and [B,4,H,W] mask from targets [B,6,H,W]
-    auto make_target_and_mask = [&](const torch::Tensor& targets_b6hw) {
-        auto target = targets_b6hw.index({Slice(), Slice(0, 4), Slice(), Slice()});  // [B,4,H,W]
-        auto m = targets_b6hw.index({Slice(), Slice(4, 6), Slice(), Slice()});       // [B,2,H,W]
-        auto mask = m.repeat_interleave(2, /*dim=*/1);                               // [B,4,H,W]
-        return std::make_pair(target, mask);
-    };
-
-    // Accumulate sign-accuracy counts (correct, valid) for channels 0 and 2
-    auto sign_counts = [&](const torch::Tensor& outputs_b4hw,
-                             const torch::Tensor& targets_b6hw,
-                             double tau) {
-        auto pred_sel = torch::cat({
-            outputs_b4hw.index({Slice(), 0, Slice(), Slice()}).unsqueeze(1),
-            outputs_b4hw.index({Slice(), 2, Slice(), Slice()}).unsqueeze(1)
-        }, 1); // [B,2,H,W]
-
-        auto target_sel = torch::cat({
-            targets_b6hw.index({Slice(), 0, Slice(), Slice()}).unsqueeze(1),
-            targets_b6hw.index({Slice(), 2, Slice(), Slice()}).unsqueeze(1)
-        }, 1); // [B,2,H,W]
-
-        auto valid = target_sel.abs() > tau;
-        auto valid_cnt = valid.sum().item<double>();
-
-        if (valid_cnt <= 0.0) return std::pair<double,double>{0.0, 0.0};
-
-        auto correct = (torch::sign(pred_sel) == torch::sign(target_sel)).logical_and(valid);
-        auto correct_cnt = correct.sum().item<double>();
-        return std::pair<double,double>{correct_cnt, valid_cnt};
-    };
+    // convert double to scalar tensor
+    auto pos_weight = torch::tensor(
+        {static_cast<float>(compute_global_pos_weight(val_loader, device))},
+        torch::TensorOptions().dtype(torch::kFloat32).device(device)
+    );
 
     int epochs = 10;
     double best_val_loss = std::numeric_limits<double>::infinity();
@@ -116,88 +209,10 @@ int main()
 
             optimizer.zero_grad();
 
-            auto outputs = model->forward(imgs);                 // [B,6,H,W]
+            auto outputs = model->forward(imgs); // [B,6,H,W]
 
-            // Predictions
-            auto p_cost_r = outputs.select(1, 0); // [B,H,W]
-            auto p_sig_r  = outputs.select(1, 1);
-            auto p_cost_d = outputs.select(1, 2);
-            auto p_sig_d  = outputs.select(1, 3);
-
-            // Targets + masks
-            auto t_cost_r = targets.select(1, 0).to(outputs.dtype());
-            auto t_sig_r  = targets.select(1, 1).to(outputs.dtype());
-            auto t_cost_d = targets.select(1, 2).to(outputs.dtype());
-            auto t_sig_d  = targets.select(1, 3).to(outputs.dtype());
-
-            auto m_r = targets.select(1, 4).to(outputs.dtype());   // [B,H,W] in {0,1}
-            auto m_d = targets.select(1, 5).to(outputs.dtype());   // [B,H,W] in {0,1}
-
-            // weighted BCE sign loss for a single cost channel
-            auto sign_loss_weighted_bce = [&](const torch::Tensor& pred_cost,
-                                            const torch::Tensor& tgt_cost,
-                                            const torch::Tensor& mask01) {
-                auto valid = mask01 > 0; // bool
-
-                // y=1 means "negative target"
-                auto y = ((tgt_cost < 0) & valid).to(pred_cost.dtype());
-
-                // logits = -pred so pred<0 => predicts y=1
-                auto logits = -pred_cost;
-
-                auto n_pos = y.sum().to(torch::kFloat32);           // count of negatives
-                auto n_all = valid.sum().to(torch::kFloat32);
-                auto n_neg = (n_all - n_pos);
-
-                auto pos_weight = ((n_neg + 1e-6f) / (n_pos + 1e-6f))
-                                    .clamp_max(20.0f)
-                                    .to(pred_cost.device());
-
-                auto bce = torch::binary_cross_entropy_with_logits(
-                    logits, y, /*weight=*/{}, /*pos_weight=*/pos_weight, torch::Reduction::None
-                );
-
-                auto denom = mask01.sum().clamp_min(1.0);
-                return (bce * mask01).sum() / denom;
-            };
-
-            // magnitude regression for costs
-            auto cost_reg = [&](const torch::Tensor& pred_cost,
-                                const torch::Tensor& tgt_cost,
-                                const torch::Tensor& mask01) {
-                auto reg = torch::smooth_l1_loss(pred_cost, tgt_cost, torch::Reduction::None);
-                auto denom = mask01.sum().clamp_min(1.0);
-                return (reg * mask01).sum() / denom;
-            };
-
-            // regression for sigma (to 0.1)
-            auto sigma_reg = [&](const torch::Tensor& pred_sig,
-                                const torch::Tensor& tgt_sig,
-                                const torch::Tensor& mask01) {
-                auto reg = torch::smooth_l1_loss(pred_sig, tgt_sig, torch::Reduction::None);
-                auto denom = mask01.sum().clamp_min(1.0);
-                return (reg * mask01).sum() / denom;
-            };
-
-            // Compute losses
-            auto loss_sign_r = sign_loss_weighted_bce(p_cost_r, t_cost_r, m_r);
-            auto loss_sign_d = sign_loss_weighted_bce(p_cost_d, t_cost_d, m_d);
-
-            auto loss_reg_r  = cost_reg(p_cost_r, t_cost_r, m_r);
-            auto loss_reg_d  = cost_reg(p_cost_d, t_cost_d, m_d);
-
-            auto loss_sig_r  = sigma_reg(p_sig_r,  t_sig_r,  m_r);
-            auto loss_sig_d  = sigma_reg(p_sig_d,  t_sig_d,  m_d);
-
-            // Combine
-            double w_sign = 1.0;
-            double w_reg  = 0.2;
-            double w_sig  = 0.2;
-
-            auto loss = w_sign * 0.5 * (loss_sign_r + loss_sign_d)
-                    + w_reg  * 0.5 * (loss_reg_r  + loss_reg_d)
-                    + w_sig  * 0.5 * (loss_sig_r  + loss_sig_d);
-
+            auto stats = compute_loss_and_signacc(outputs, targets, pos_weight, 1.0, 0.3, 0.1);
+            auto loss = stats.loss;
 
             loss.backward();
             optimizer.step();
@@ -223,41 +238,36 @@ int main()
                           << " mean=" << t.mean().item<double>()
                           << " std=" << t.std().item<double>()
                           << std::endl;
-          
+
                 // =========================
                 // Validation
                 // =========================
                 model->eval();
+                torch::NoGradGuard ng;
 
-                double val_num_sum = 0.0;
-                double val_den_sum = 0.0;
-                double val_correct_sum = 0.0;
-                double val_valid_sum = 0.0;
+                double loss_num = 0.0, loss_den = 0.0;
+                int64_t correct = 0, valid = 0;
 
                 for (auto& batch : *val_loader) {
-                    auto imgs = batch.data.to(device, /*non_blocking=*/true);
-                    auto targets = batch.target.to(device, /*non_blocking=*/true);
+                    auto imgs = batch.data.to(device, true);
+                    auto targets = batch.target.to(device, true);
 
                     auto outputs = model->forward(imgs);
 
-                    auto [target, mask] = make_target_and_mask(targets);
-                    mask = mask.to(outputs.dtype());
+                    auto stats = compute_loss_and_signacc(outputs, targets, pos_weight, 1.0, 0.3, 0.1);
 
-                    auto abs_err = (outputs - target).abs();
-                    auto num = (abs_err * mask).sum();
-                    auto den = mask.sum().clamp_min(1.0);
+                    double w = stats.valid_w.item<double>();
+                    loss_num += stats.loss.item<double>() * w;
+                    loss_den += w;
 
-                    val_num_sum += num.item<double>();
-                    val_den_sum += den.item<double>();
-
-                    auto [c_cnt, v_cnt] = sign_counts(outputs, targets, tau);
-                    val_correct_sum += c_cnt;
-                    val_valid_sum += v_cnt;
+                    correct += stats.correct;
+                    valid   += stats.valid;
                 }
+
                 model->train();
 
-                const double val_loss = val_num_sum / std::max(1.0, val_den_sum);
-                const double val_sign_acc = (val_valid_sum > 0.0) ? (val_correct_sum / val_valid_sum) : 0.0;
+                double val_loss = loss_num / std::max(1e-12, loss_den);
+                double val_sign_acc = (valid > 0) ? (double(correct) / double(valid)) : 0.0;
 
                 std::cout << "Epoch [" << epoch << "/" << epochs
                         << "] Val Loss: " << val_loss

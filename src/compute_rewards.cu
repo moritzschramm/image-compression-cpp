@@ -180,11 +180,9 @@ torch::Tensor compute_rewards_batched(
         }
 
         // Reward on GPU
-        auto valid = (counts >= min_pixels_per_segment);                 // [K] bool
-        auto counts_f = counts.to(torch::kFloat64);
-        auto p = (counts_f / num_pixels) * valid.to(torch::kFloat64);    // invalid -> 0
-        auto sumsq = (p * p).sum();
-        auto P = 1.0 - sumsq;
+        auto valid = (counts >= min_pixels_per_segment);
+        auto k_valid = valid.to(torch::kInt64).sum();
+        auto P = (k_valid == 1).to(torch::kFloat64);
 
         auto size_segments = seg_sizes.sum();
         auto size_image_t  = sizes[b];                                   // CUDA scalar float64

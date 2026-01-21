@@ -9,10 +9,6 @@
 #include "rama_wrapper.cuh"
 #include "compute_rewards.cuh"
 
-#ifdef torch
-#undef torch
-#endif
-
 
 torch::Tensor flatten_grid_edges(const torch::Tensor& x)
 {
@@ -71,8 +67,6 @@ void build_rama_indices(
 
 int main()
 {
-    torch::manual_seed(0);
-
     const auto device = torch::kCUDA;
 
     EdgeUNet model;

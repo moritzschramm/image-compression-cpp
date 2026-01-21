@@ -13,5 +13,5 @@ torch::Tensor compute_rewards_batched(
     float gamma = 0.1f,
     double overhead_base = 9.308622,
     bool adaptive_filter = true,
-    double lambda = 0.1
+    double lambda = 0.5
 );
