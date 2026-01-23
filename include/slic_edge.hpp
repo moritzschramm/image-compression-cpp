@@ -8,10 +8,10 @@
 // Values: 1.0 for connect (same superpixel), 0.0 for cut (superpixel boundary)
 torch::Tensor slic_edge_costs(
     const cv::Mat& input,
-    int region_size = 20,
-    float ruler = 10.0f,
+    int region_size = 10,
+    float ruler = 0.0f,
     int iters = 10,
-    int slic_algorithm = cv::ximgproc::SLICO
+    int slic_algorithm = cv::ximgproc::SLIC
 ) {
     if (input.empty()) throw std::runtime_error("slic_edge_costs: input image is empty");
 
