@@ -5,7 +5,7 @@
 // Output: edges [2, H, W] (float32, CPU)
 //   edges[0, y, x] = horizontal edge between (y,x) and (y,x+1) for x in [0, W-2]
 //   edges[1, y, x] = vertical   edge between (y,x) and (y+1,x) for y in [0, H-2]
-// Values: +1 inside a superpixel, -1 on superpixel borders
+// Values: 1.0 for connect (same superpixel), 0.0 for cut (superpixel boundary)
 torch::Tensor slic_edge_costs(
     const cv::Mat& input,
     int region_size = 20,
@@ -13,32 +13,40 @@ torch::Tensor slic_edge_costs(
     int iters = 10,
     int slic_algorithm = cv::ximgproc::SLICO
 ) {
-    cv::Mat image;
     if (input.empty()) throw std::runtime_error("slic_edge_costs: input image is empty");
-    if (input.depth() != CV_8U) {
-        if (input.depth() == CV_16U) {
-            input.convertTo(image, CV_8U, 1.0 / 257.0); // 65535/255 ≈ 257
-        } else {
-            throw std::runtime_error("slic_edge_costs: expected 8-bit or 16-bit image (CV_8U, CV_16U)");
-        }
-    } else {
-        image = input;
-    }
 
-    const int H = image.rows;
-    const int W = image.cols;
-
-    // SLIC in OpenCV ximgproc expects 3 or 4 channels; convert grayscale to BGR
-    cv::Mat img;
-    if (image.channels() == 1) {
-        cv::cvtColor(image, img, cv::COLOR_GRAY2BGR);
-    } else if (image.channels() == 3 || image.channels() == 4) {
-        img = image;
+    // SLIC expects 3-channel input; drop alpha if present.
+    cv::Mat img_bgr;
+    if (input.channels() == 1) {
+        cv::cvtColor(input, img_bgr, cv::COLOR_GRAY2BGR);
+    } else if (input.channels() == 3) {
+        img_bgr = input;
+    } else if (input.channels() == 4) {
+        cv::cvtColor(input, img_bgr, cv::COLOR_BGRA2BGR);
     } else {
         throw std::runtime_error("slic_edge_costs: unsupported channel count");
     }
 
+    // Convert to float32 for SLIC.
+    cv::Mat img;
+    if (img_bgr.depth() == CV_8U) {
+        img_bgr.convertTo(img, CV_32FC3, 1.0 / 255.0);
+    } else if (img_bgr.depth() == CV_16U) {
+        img_bgr.convertTo(img, CV_32FC3, 1.0 / 65535.0);
+    } else if (img_bgr.depth() == CV_32F) {
+        if (img_bgr.type() == CV_32FC3) {
+            img = img_bgr;
+        } else {
+            img_bgr.convertTo(img, CV_32FC3);
+        }
+    } else {
+        throw std::runtime_error("slic_edge_costs: expected 8-bit, 16-bit, or 32-bit float image");
+    }
+
     if (!img.isContinuous()) img = img.clone();
+
+    const int H = img.rows;
+    const int W = img.cols;
 
     // Run SLIC superpixels
     auto sp = cv::ximgproc::createSuperpixelSLIC(img, slic_algorithm, region_size, ruler);

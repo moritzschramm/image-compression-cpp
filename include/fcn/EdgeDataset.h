@@ -9,8 +9,8 @@
 #include "slic_edge.hpp"
 
 // Target layout (C,H,W):
-// 0: cost_right   (learned)  {0,1}
-// 1: cost_down    (learned)  {0,1}
+// 0: cost_right   (learned)  {0,1} where 1 = connect
+// 1: cost_down    (learned)  {0,1} where 1 = connect
 // 2: mask_right   (1 if x+1<W else 0)
 // 3: mask_down    (1 if y+1<H else 0)
 
@@ -91,7 +91,7 @@ struct EdgeDataset : torch::data::Dataset<EdgeDataset> {
 
         torch::Tensor target;
         if (create_targets) {
-            target = create_target_with_mask(img); // [6,H,W]
+            target = create_target_with_mask(img); // [4,H,W]
         } else {
             // file size of image
             const double sz = static_cast<double>(file_size_bytes(image_paths[idx]));

@@ -9,22 +9,31 @@
 #include <cstdint>
 #include <algorithm>
 
-struct CutMetrics {
-    int64_t TP = 0; // predict cut and is cut
-    int64_t FP = 0; // predict cut but is connect
-    int64_t TN = 0; // predict connect and is connect
-    int64_t FN = 0; // predict connect but is cut
+struct EdgeMetrics {
+    int64_t TP_conn = 0; // predict connect and is connect
+    int64_t FP_conn = 0; // predict connect but is cut
+    int64_t TN_conn = 0; // predict cut and is cut
+    int64_t FN_conn = 0; // predict cut but is connect
 
-    double precision = 0.0; // TP / (TP+FP)
-    double recall    = 0.0; // TP / (TP+FN)
-    double f1        = 0.0; // 2PR/(P+R)
+    int64_t TP_cut = 0;  // predict cut and is cut
+    int64_t FP_cut = 0;  // predict cut but is connect
+    int64_t TN_cut = 0;  // predict connect and is connect
+    int64_t FN_cut = 0;  // predict connect but is cut
+
+    double precision_conn = 0.0; // TP / (TP+FP)
+    double recall_conn    = 0.0; // TP / (TP+FN)
+    double f1_conn        = 0.0; // 2PR/(P+R)
+
+    double precision_cut = 0.0;
+    double recall_cut    = 0.0;
+    double f1_cut        = 0.0;
 };
 
-inline CutMetrics compute_cut_metrics(
+inline EdgeMetrics compute_edge_metrics(
     const torch::Tensor& logits_r,   // [B,H,W] float
     const torch::Tensor& logits_d,   // [B,H,W] float
-    const torch::Tensor& y_r,        // [B,H,W] float in {0,1}
-    const torch::Tensor& y_d,        // [B,H,W] float in {0,1}
+    const torch::Tensor& y_r,        // [B,H,W] float in {0,1} (1 = connect)
+    const torch::Tensor& y_d,        // [B,H,W] float in {0,1} (1 = connect)
     const torch::Tensor& mask_r,     // [B,H,W] float/bool in {0,1}
     const torch::Tensor& mask_d,     // [B,H,W] float/bool in {0,1}
     double thresh = 0.5              // threshold on probability p=sigmoid(logit)
@@ -34,31 +43,48 @@ inline CutMetrics compute_cut_metrics(
     TORCH_CHECK(mask_r.sizes()  == y_r.sizes(), "mask_r and y_r shape mismatch");
     TORCH_CHECK(mask_d.sizes()  == y_d.sizes(), "mask_d and y_d shape mismatch");
 
-    // predict cut if p < thresh  <=>  logit < log(thresh/(1-thresh))
+    // predict connect if p >= thresh  <=>  logit >= log(thresh/(1-thresh))
     double logit_thresh = std::log(thresh / (1.0 - thresh));
 
-    auto pred_cut_r = (logits_r < logit_thresh);
-    auto pred_cut_d = (logits_d < logit_thresh);
+    auto pred_conn_r = (logits_r >= logit_thresh);
+    auto pred_conn_d = (logits_d >= logit_thresh);
 
-    auto gt_cut_r = (y_r < 0.5);
-    auto gt_cut_d = (y_d < 0.5);
+    auto gt_conn_r = (y_r >= 0.5);
+    auto gt_conn_d = (y_d >= 0.5);
 
     auto m_r = (mask_r > 0.5);
     auto m_d = (mask_d > 0.5);
 
-    // Confusion counts for "cut" as positive class
-    auto tp = ((pred_cut_r & gt_cut_r & m_r).sum() + (pred_cut_d & gt_cut_d & m_d).sum()).item<int64_t>();
-    auto fp = ((pred_cut_r & (~gt_cut_r) & m_r).sum() + (pred_cut_d & (~gt_cut_d) & m_d).sum()).item<int64_t>();
-    auto fn = (((~pred_cut_r) & gt_cut_r & m_r).sum() + ((~pred_cut_d) & gt_cut_d & m_d).sum()).item<int64_t>();
-    auto tn = (((~pred_cut_r) & (~gt_cut_r) & m_r).sum() + ((~pred_cut_d) & (~gt_cut_d) & m_d).sum()).item<int64_t>();
-
-    CutMetrics out;
-    out.TP = tp; out.FP = fp; out.FN = fn; out.TN = tn;
-
     const double eps = 1e-12;
-    out.precision = double(tp) / (double(tp + fp) + eps);
-    out.recall    = double(tp) / (double(tp + fn) + eps);
-    out.f1        = (2.0 * out.precision * out.recall) / (out.precision + out.recall + eps);
+
+    // Confusion counts for "connect" as positive class
+    auto tp_conn = ((pred_conn_r & gt_conn_r & m_r).sum() + (pred_conn_d & gt_conn_d & m_d).sum()).item<int64_t>();
+    auto fp_conn = ((pred_conn_r & (~gt_conn_r) & m_r).sum() + (pred_conn_d & (~gt_conn_d) & m_d).sum()).item<int64_t>();
+    auto fn_conn = (((~pred_conn_r) & gt_conn_r & m_r).sum() + ((~pred_conn_d) & gt_conn_d & m_d).sum()).item<int64_t>();
+    auto tn_conn = (((~pred_conn_r) & (~gt_conn_r) & m_r).sum() + ((~pred_conn_d) & (~gt_conn_d) & m_d).sum()).item<int64_t>();
+
+    auto pred_cut_r = ~pred_conn_r;
+    auto pred_cut_d = ~pred_conn_d;
+    auto gt_cut_r = ~gt_conn_r;
+    auto gt_cut_d = ~gt_conn_d;
+
+    // Confusion counts for "cut" as positive class
+    auto tp_cut = ((pred_cut_r & gt_cut_r & m_r).sum() + (pred_cut_d & gt_cut_d & m_d).sum()).item<int64_t>();
+    auto fp_cut = ((pred_cut_r & (~gt_cut_r) & m_r).sum() + (pred_cut_d & (~gt_cut_d) & m_d).sum()).item<int64_t>();
+    auto fn_cut = (((~pred_cut_r) & gt_cut_r & m_r).sum() + ((~pred_cut_d) & gt_cut_d & m_d).sum()).item<int64_t>();
+    auto tn_cut = (((~pred_cut_r) & (~gt_cut_r) & m_r).sum() + ((~pred_cut_d) & (~gt_cut_d) & m_d).sum()).item<int64_t>();
+
+    EdgeMetrics out;
+    out.TP_conn = tp_conn; out.FP_conn = fp_conn; out.FN_conn = fn_conn; out.TN_conn = tn_conn;
+    out.TP_cut  = tp_cut;  out.FP_cut  = fp_cut;  out.FN_cut  = fn_cut;  out.TN_cut  = tn_cut;
+
+    out.precision_conn = double(tp_conn) / (double(tp_conn + fp_conn) + eps);
+    out.recall_conn    = double(tp_conn) / (double(tp_conn + fn_conn) + eps);
+    out.f1_conn        = (2.0 * out.precision_conn * out.recall_conn) / (out.precision_conn + out.recall_conn + eps);
+
+    out.precision_cut = double(tp_cut) / (double(tp_cut + fp_cut) + eps);
+    out.recall_cut    = double(tp_cut) / (double(tp_cut + fn_cut) + eps);
+    out.f1_cut        = (2.0 * out.precision_cut * out.recall_cut) / (out.precision_cut + out.recall_cut + eps);
     return out;
 }
 
@@ -78,8 +104,8 @@ torch::Tensor masked_mean(const torch::Tensor& x, const torch::Tensor& mask) {
 }
 
 BatchStats compute_loss_and_signacc(
-    const torch::Tensor& outputs,   // [B,6,H,W]
-    const torch::Tensor& targets,   // [B,6,H,W]
+    const torch::Tensor& outputs,   // [B,4,H,W]
+    const torch::Tensor& targets,   // [B,4,H,W]
     const torch::Tensor& pos_weight, // scalar tensor
     double w_sign = 1.0,
     double w_sig  = 0.01
@@ -103,11 +129,12 @@ BatchStats compute_loss_and_signacc(
     auto bce_r = torch::nn::functional::binary_cross_entropy_with_logits(logit_r, y_cost_r, bce_opts);
     auto bce_d = torch::nn::functional::binary_cross_entropy_with_logits(logit_d, y_cost_d, bce_opts);
 
-    auto neg_w = (1.0 / pos_weight).to(outputs.dtype());
+    auto pos_w = pos_weight.to(outputs.dtype());
 
-    // y==1 (connect) weight 1, y==0 (cut) weight neg_w
-    auto w_r = y_cost_r + (1.0 - y_cost_r) * neg_w;
-    auto w_d = y_cost_d + (1.0 - y_cost_d) * neg_w;
+    // y==1 (connect) weight pos_w, y==0 (cut) weight 1
+    // With pos_w < 1, this downweights the overrepresented connect class.
+    auto w_r = (1.0 - y_cost_r) + y_cost_r * pos_w;
+    auto w_d = (1.0 - y_cost_d) + y_cost_d * pos_w;
 
     auto num = (bce_r * w_r * mask_r).sum() + (bce_d * w_d * mask_d).sum();
     auto den = (w_r * mask_r).sum() + (w_d * mask_d).sum();
@@ -235,7 +262,7 @@ int main()
     );
 
     auto pos_weight = torch::tensor(
-        {static_cast<float>(0.1)}, // or use compute_global_pos_weight(*train_loader) with appropriate training dataset size
+        {static_cast<float>(0.1)}, // connect-class weight; <1 downweights connect to emphasize cuts
         torch::TensorOptions().dtype(torch::kFloat32).device(device)
     );
 
@@ -286,7 +313,7 @@ int main()
                 auto mask_r = targets.select(1,2);
                 auto mask_d = targets.select(1,3);
 
-                CutMetrics m = compute_cut_metrics(logit_r, logit_d, y_r, y_d, mask_r, mask_d, 0.5);
+                EdgeMetrics m = compute_edge_metrics(logit_r, logit_d, y_r, y_d, mask_r, mask_d, 0.5);
 
                 double loss_num = 0.0, loss_den = 0.0;
                 int64_t correct = 0, valid = 0;
@@ -316,10 +343,9 @@ int main()
 
                 std::cout << "Epoch [" << epoch << "/" << epochs
                           << "] Batch [" << batch_count
-                          << "] Loss: " << loss.item<float>() 
-                          << " Precision: " << m.precision 
-                          << " Recall: " << m.recall
-                          << " F1: " << m.f1
+                          << "] Loss: " << loss.item<float>()
+                          << " Conn P/R/F1: " << m.precision_conn << "/" << m.recall_conn << "/" << m.f1_conn
+                          << " Cut P/R/F1: " << m.precision_cut << "/" << m.recall_cut << "/" << m.f1_cut
                           << " Sign accuracy: " << train_sign_accuracy
                           << " Val Loss: " << val_loss
                           << " Val Sign accuracy: " << val_sign_acc
