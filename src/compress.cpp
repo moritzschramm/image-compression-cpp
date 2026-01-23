@@ -99,7 +99,7 @@ int main()
     std::cout << "Found " << std::to_string(paths.size()) << " images" << std::endl;
 
     EdgeUNet model;
-    torch::load(model, "fcn_pretrained_1769160382_best.pt");
+    torch::load(model, "fcn_pretrained_1769162919_best.pt");
     model->to(device);
     model->eval();
 

@@ -103,7 +103,7 @@ BatchStats compute_loss_and_signacc(
     auto bce_r = torch::nn::functional::binary_cross_entropy_with_logits(logit_r, y_cost_r, bce_opts);
     auto bce_d = torch::nn::functional::binary_cross_entropy_with_logits(logit_d, y_cost_d, bce_opts);
 
-    auto neg_w = (1.0 / pos_weight);
+    auto neg_w = (1.0 / pos_weight).to(outputs.dtype());
 
     // y==1 (connect) weight 1, y==0 (cut) weight neg_w
     auto w_r = y_cost_r + (1.0 - y_cost_r) * neg_w;
@@ -193,7 +193,7 @@ int main()
 
     torch::optim::AdamW optimizer(
         model->parameters(),
-        torch::optim::AdamWOptions(2e-3).weight_decay(1e-4)
+        torch::optim::AdamWOptions(1e-3).weight_decay(1e-4)
     );
 
     // -------------------------
@@ -235,7 +235,7 @@ int main()
     );
 
     auto pos_weight = torch::tensor(
-        {static_cast<float>(0.067295)}, // or use compute_global_pos_weight(*train_loader) with appropriate training dataset size
+        {static_cast<float>(0.1)}, // or use compute_global_pos_weight(*train_loader) with appropriate training dataset size
         torch::TensorOptions().dtype(torch::kFloat32).device(device)
     );
 
@@ -260,7 +260,7 @@ int main()
 
             optimizer.zero_grad();
 
-            auto outputs = model->forward(imgs); // [B,6,H,W]
+            auto outputs = model->forward(imgs); // [B,4,H,W]
 
             auto stats = compute_loss_and_signacc(outputs, targets, pos_weight);
             auto loss = stats.loss;

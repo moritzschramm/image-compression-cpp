@@ -4,6 +4,7 @@
 #include <mutex>
 #include <opencv2/imgcodecs.hpp>
 
+#include "configuration.h"
 #include "image_writer.h"
 #include "metadata.h"
 
@@ -103,7 +104,7 @@ bool write_slices(const cv::Mat& input, const torch::Tensor& mask,
 
             if (slice.empty()) return;
 
-            std::string filename = "slice_" + std::to_string(label);
+            std::string filename = "slice_" + std::to_string(label) + "." + IMAGE_FORMAT;
             success = write_image(dir / filename, slice) && success;
 
             // store metadata

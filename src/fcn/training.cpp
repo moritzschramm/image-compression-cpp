@@ -68,6 +68,8 @@ void build_rama_indices(
 int main()
 {
     const auto device = torch::kCUDA;
+    const auto TRAIN_DATASET_SIZE = 1e6;
+    const auto VAL_DATASET_SIZE = 64;
 
     EdgeUNet model;
     torch::load(model, "fcn_pretrained_1768820146_best.pt");
@@ -94,9 +96,11 @@ int main()
     // -------------------------
     // Train dataset loader
     // -------------------------
-    auto image_paths = find_image_files_recursively(DATASET_DIR, IMAGE_FORMAT);
+    auto train_image_paths = find_image_files_recursively(DATASET_DIR, IMAGE_FORMAT);
 
-    auto train_dataset = EdgeDataset(image_paths, /*create_targets=*/false)
+    if (train_image_paths.size() > TRAIN_DATASET_SIZE) train_image_paths.resize(TRAIN_DATASET_SIZE);
+
+    auto train_dataset = EdgeDataset(train_image_paths, /*create_targets=*/false)
         .map(torch::data::transforms::Stack<>());
 
     const size_t BATCH_SIZE = 8;
@@ -114,7 +118,7 @@ int main()
     // -------------------------
     auto val_image_paths = find_image_files_recursively(VAL_DATASET_DIR, IMAGE_FORMAT);
 
-    if (val_image_paths.size() > 64) val_image_paths.resize(64);
+    if (val_image_paths.size() > VAL_DATASET_SIZE) val_image_paths.resize(VAL_DATASET_SIZE);
 
     auto val_dataset = EdgeDataset(val_image_paths, /*create_targets=*/false)
         .map(torch::data::transforms::Stack<>());
