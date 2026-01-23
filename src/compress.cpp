@@ -99,7 +99,7 @@ int main()
     std::cout << "Found " << std::to_string(paths.size()) << " images" << std::endl;
 
     EdgeUNet model;
-    torch::load(model, "fcn_trained.pt");
+    torch::load(model, "fcn_pretrained_1769160382_best.pt");
     model->to(device);
     model->eval();
 
@@ -125,7 +125,7 @@ int main()
 
         auto flat = flatten_grid_edges(output);
         double mu_scale = 2.0;
-        auto mu = mu_scale * torch::tanh(flat.select(1,0));
+        auto mu = mu_scale * torch::tanh(0.5 * flat.select(1,0));
 
         std::vector<int32_t> i_idx;
         std::vector<int32_t> j_idx;
@@ -141,7 +141,10 @@ int main()
         node_labels = node_labels.view({B, image.rows, image.cols}).contiguous();
         node_labels = node_labels.squeeze(0).to(torch::kCPU);
 
-        write_slices(image, node_labels, RESULTS_DIR, path.stem());
+        cv::Mat bgra;
+        cv::cvtColor(image, bgra, cv::COLOR_BGR2BGRA);
+
+        write_slices(bgra, node_labels, RESULTS_DIR, path.stem());
 
         break;
     }

@@ -148,9 +148,9 @@ int main()
             torch::Tensor raw_sigma = flat.select(1, 1);
 
             const double mu_scale = 2.0;
-            const double sigma_min = 0.02;
-            const double sigma_max = 0.30;
-            auto mu = mu_scale * torch::tanh(raw_mu);
+            const double sigma_min = 0.1;
+            const double sigma_max = 0.9;
+            auto mu = mu_scale * torch::tanh(0.5 * raw_mu);
             auto sigma = sigma_min + (sigma_max - sigma_min) * torch::sigmoid(raw_sigma);
 
             // sample weights + compute logp/entropy on GPU
@@ -210,7 +210,7 @@ int main()
 
                     auto out = model->forward(images);
                     auto flat = flatten_grid_edges(out);
-                    auto mu = mu_scale * torch::tanh(flat.select(1,0));
+                    auto mu = mu_scale * torch::tanh(0.5 * flat.select(1,0));
 
                     auto edge_costs = mu.to(torch::kFloat32).contiguous();
                     torch::Tensor node_labels = rama_torch_batched(i_device, j_device, edge_costs);
