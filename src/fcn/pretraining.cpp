@@ -313,10 +313,12 @@ int main()
                 auto mask_r = targets.select(1,2);
                 auto mask_d = targets.select(1,3);
 
-                EdgeMetrics m = compute_edge_metrics(logit_r, logit_d, y_r, y_d, mask_r, mask_d, 0.5);
+                EdgeMetrics train_m = compute_edge_metrics(logit_r, logit_d, y_r, y_d, mask_r, mask_d, 0.5);
 
                 double loss_num = 0.0, loss_den = 0.0;
                 int64_t correct = 0, valid = 0;
+                int64_t val_tp_conn = 0, val_fp_conn = 0, val_fn_conn = 0, val_tn_conn = 0;
+                int64_t val_tp_cut = 0, val_fp_cut = 0, val_fn_cut = 0, val_tn_cut = 0;
 
                 for (auto& batch : *val_loader) {
                     auto imgs = batch.data.to(device, true);
@@ -332,23 +334,43 @@ int main()
 
                     correct += stats.correct;
                     valid   += stats.valid;
+
+                    auto v_logit_r = outputs.select(1, 0);
+                    auto v_logit_d = outputs.select(1, 2);
+                    auto v_y_r     = targets.select(1, 0);
+                    auto v_y_d     = targets.select(1, 1);
+                    auto v_mask_r  = targets.select(1, 2);
+                    auto v_mask_d  = targets.select(1, 3);
+
+                    EdgeMetrics vm = compute_edge_metrics(v_logit_r, v_logit_d, v_y_r, v_y_d, v_mask_r, v_mask_d, 0.5);
+                    val_tp_conn += vm.TP_conn; val_fp_conn += vm.FP_conn; val_fn_conn += vm.FN_conn; val_tn_conn += vm.TN_conn;
+                    val_tp_cut  += vm.TP_cut;  val_fp_cut  += vm.FP_cut;  val_fn_cut  += vm.FN_cut;  val_tn_cut  += vm.TN_cut;
                 }
 
                 model->train();
 
                 double val_loss = loss_num / std::max(1e-12, loss_den);
                 double val_sign_acc = (valid > 0) ? (double(correct) / double(valid)) : 0.0;
+                const double eps = 1e-12;
+                double val_prec_conn = double(val_tp_conn) / (double(val_tp_conn + val_fp_conn) + eps);
+                double val_rec_conn  = double(val_tp_conn) / (double(val_tp_conn + val_fn_conn) + eps);
+                double val_f1_conn   = (2.0 * val_prec_conn * val_rec_conn) / (val_prec_conn + val_rec_conn + eps);
+                double val_prec_cut = double(val_tp_cut) / (double(val_tp_cut + val_fp_cut) + eps);
+                double val_rec_cut  = double(val_tp_cut) / (double(val_tp_cut + val_fn_cut) + eps);
+                double val_f1_cut   = (2.0 * val_prec_cut * val_rec_cut) / (val_prec_cut + val_rec_cut + eps);
 
                 double train_sign_accuracy = (stats.valid > 0) ? (double(stats.correct) / double(stats.valid)) : 0.0;
 
-                std::cout << "Epoch [" << epoch << "/" << epochs
-                          << "] Batch [" << batch_count
-                          << "] Loss: " << loss.item<float>()
-                          << " Conn P/R/F1: " << m.precision_conn << "/" << m.recall_conn << "/" << m.f1_conn
-                          << " Cut P/R/F1: " << m.precision_cut << "/" << m.recall_cut << "/" << m.f1_cut
-                          << " Sign accuracy: " << train_sign_accuracy
-                          << " Val Loss: " << val_loss
-                          << " Val Sign accuracy: " << val_sign_acc
+                std::cout << "Epoch [" << epoch << "/" << epochs << "] Batch [" << batch_count << "]\n"
+                          << "  Train: loss=" << loss.item<float>()
+                          << " sign_acc=" << train_sign_accuracy
+                          << " conn P/R/F1=" << train_m.precision_conn << "/" << train_m.recall_conn << "/" << train_m.f1_conn
+                          << " cut P/R/F1=" << train_m.precision_cut << "/" << train_m.recall_cut << "/" << train_m.f1_cut
+                          << "\n"
+                          << "  Val:   loss=" << val_loss
+                          << " sign_acc=" << val_sign_acc
+                          << " conn P/R/F1=" << val_prec_conn << "/" << val_rec_conn << "/" << val_f1_conn
+                          << " cut P/R/F1=" << val_prec_cut << "/" << val_rec_cut << "/" << val_f1_cut
                           << std::endl;
 
                 if (val_loss < best_val_loss) {

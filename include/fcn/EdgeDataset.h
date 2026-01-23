@@ -6,7 +6,11 @@
 #include <stdexcept>
 #include <vector>
 #include "image_loader.h"
+#include "configuration.h"
 #include "slic_edge.hpp"
+#include "canny_edge.hpp"
+#include "graph_based_edge.hpp"
+#include "watershed_edge.hpp"
 
 // Target layout (C,H,W):
 // 0: cost_right   (learned)  {0,1} where 1 = connect
@@ -14,12 +18,27 @@
 // 2: mask_right   (1 if x+1<W else 0)
 // 3: mask_down    (1 if y+1<H else 0)
 
+inline torch::Tensor compute_edge_costs(const cv::Mat& img) {
+    switch (EDGE_TARGET) {
+        case EdgeTargetType::SLIC:
+            return slic_edge_costs(img);
+        case EdgeTargetType::CANNY:
+            return canny_edge_costs(img);
+        case EdgeTargetType::GRAPH:
+            return graph_based_edge_costs(img);
+        case EdgeTargetType::WATERSHED:
+            return watershed_edge_costs(img);
+        default:
+            return slic_edge_costs(img);
+    }
+}
+
 torch::Tensor create_target_with_mask(const cv::Mat& img) {
 
     const int H = img.rows;
     const int W = img.cols;
 
-    torch::Tensor edges = slic_edge_costs(img);
+    torch::Tensor edges = compute_edge_costs(img);
 
     torch::Tensor out = torch::zeros({4, H, W}, torch::TensorOptions().dtype(torch::kFloat32));
 

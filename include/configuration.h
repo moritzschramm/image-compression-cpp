@@ -9,3 +9,12 @@ const std::filesystem::path RESULTS_DIR = "./results";
 const std::filesystem::path CACHE_DIR = "./.cache/imagecompression";
 const std::string IMAGE_FORMAT = "png";
 const int COMPRESSION_LEVEL = 4;
+
+enum class EdgeTargetType {
+    SLIC,
+    CANNY,
+    GRAPH,
+    WATERSHED
+};
+
+const EdgeTargetType EDGE_TARGET = EdgeTargetType::GRAPH;
