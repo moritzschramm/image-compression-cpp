@@ -4,9 +4,14 @@ on:
   push:
   pull_request:
 
+defaults:
+  run:
+    shell: bash
+
 env:
   BUILD_TYPE: Release
   LIBTORCH_URL: https://download.pytorch.org/libtorch/cu126/libtorch-cxx11-abi-shared-with-deps-2.7.0%2Bcu126.zip
+  TORCH_DIR: ${{ github.workspace }}/_deps/libtorch
 
 jobs:
   build:
@@ -23,6 +28,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive   # fetch RAMA submodule here
+
+      - name: Mark repo as safe for git (container mount)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Install build deps
         run: |
@@ -49,8 +57,6 @@ jobs:
           rm -f libtorch.zip
 
       - name: Setup repo (submodule + patches + configure)
-        env:
-          TORCH_DIR: ${{ github.workspace }}/_deps/libtorch
         run: |
           chmod +x ./setup.sh
           ./setup.sh -GNinja -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DENABLE_CUDA=ON
