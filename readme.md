@@ -1,4 +1,5 @@
-# Image Compression with Multicut
+# Image Compression with Multicut [![build](https://github.com/moritzschramm/image-compression-cpp/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/moritzschramm/image-compression-cpp/actions/workflows/build.yml)
+
 
 Use DL and RL to predict weights for Multicut to segment image into well compressable image slices.
 Position in original image is stored as well, so reassembly to original image is possible.
