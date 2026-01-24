@@ -32,6 +32,7 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 # RAMA only when CUDA enabled
 ####################
 if(ENABLE_CUDA)
+    set(CMAKE_CUDA_ARCHITECTURES 89)
     add_subdirectory(external/RAMA)
 endif()
 
