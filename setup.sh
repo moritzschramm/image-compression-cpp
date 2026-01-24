@@ -5,8 +5,13 @@ cd "$(dirname "$0")"
 
 mkdir -p dataset results
 
-git submodule sync --recursive
-git submodule update --init --recursive
+
+if [[ -d .git ]]; then
+    git submodule sync --recursive
+    git submodule update --init --recursive
+else
+    echo "No .git directory; skipping submodule update."
+fi
 
 # custom patch to make RAMA compile
 sed -i \

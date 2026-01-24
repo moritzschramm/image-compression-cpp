@@ -15,16 +15,21 @@ jobs:
       image: nvidia/cuda:12.6.0-devel-ubuntu24.04
 
     steps:
+      - name: Install tools needed for checkout
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates
+
       - uses: actions/checkout@v4
         with:
-          submodules: false  # setup.sh does this
+          submodules: recursive   # fetch RAMA submodule here
 
-      - name: Install deps
+      - name: Install build deps
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config \
-            git curl unzip ca-certificates \
+            curl unzip \
             libopencv-dev libopencv-contrib-dev
 
       - name: Cache LibTorch
