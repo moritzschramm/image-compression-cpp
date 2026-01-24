@@ -114,6 +114,10 @@ target_compile_options(image_converter PRIVATE -O3)
 ####################
 add_executable(pretraining
     src/fcn/pretraining.cpp
+    src/slic_edge.cpp
+    src/canny_edge.cpp
+    src/graph_based_edge.cpp
+    src/watershed_edge.cpp
     src/image_loader.cpp
     src/image_writer.cpp
 )
@@ -133,6 +137,10 @@ if(ENABLE_CUDA)
 add_executable(training
     src/fcn/training.cpp
     src/rama_wrapper.cu
+    src/slic_edge.cpp
+    src/canny_edge.cpp
+    src/graph_based_edge.cpp
+    src/watershed_edge.cpp
     src/image_loader.cpp
     src/png_size_estimator.cu
     src/segment_stats.cu
@@ -147,6 +155,10 @@ target_link_libraries(training PRIVATE
 else()
 add_executable(training
     src/fcn/training.cpp
+    src/slic_edge.cpp
+    src/canny_edge.cpp
+    src/graph_based_edge.cpp
+    src/watershed_edge.cpp
 )
 target_link_libraries(training PRIVATE
     ${OpenCV_LIBS}

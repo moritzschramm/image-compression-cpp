@@ -1,9 +1,8 @@
-#pragma once
-#include <torch/torch.h>
-#include <opencv2/opencv.hpp>
-#include <opencv2/ximgproc/segmentation.hpp>
+#include "graph_based_edge.h"
+#include <stdexcept>
 
-static inline cv::Mat to_bgr_u8_or_throw(const cv::Mat& img_any) {
+namespace {
+cv::Mat to_bgr_u8_or_throw(const cv::Mat& img_any) {
     CV_Assert(!img_any.empty());
     CV_Assert(img_any.channels() == 1 || img_any.channels() == 3 || img_any.channels() == 4);
 
@@ -40,16 +39,13 @@ static inline cv::Mat to_bgr_u8_or_throw(const cv::Mat& img_any) {
     if (!img_u8.isContinuous()) img_u8 = img_u8.clone();
     return img_u8;
 }
+} // namespace
 
-// Output: edges [2, H, W] (float32, CPU)
-//   edges[0, y, x] = horizontal edge between (y,x) and (y,x+1) for x in [0, W-2]
-//   edges[1, y, x] = vertical   edge between (y,x) and (y+1,x) for y in [0, H-2]
-// Values: 1.0 for connect (same segment), 0.0 for cut (segment boundary)
-inline torch::Tensor graph_based_edge_costs(
+torch::Tensor graph_based_edge_costs(
     const cv::Mat& input,
-    float sigma = 0.5f,
-    float k = 300.0f,
-    int min_size = 100
+    float sigma,
+    float k,
+    int min_size
 ) {
     cv::Mat img_u8 = to_bgr_u8_or_throw(input);
 

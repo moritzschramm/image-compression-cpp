@@ -1,21 +1,10 @@
-#include <torch/torch.h>
-#include <opencv2/opencv.hpp>
-#include <opencv2/ximgproc.hpp>
+#include "slic_edge.h"
+#include <stdexcept>
 
-// Output: edges [2, H, W] (float32, CPU)
-//   edges[0, y, x] = horizontal edge between (y,x) and (y,x+1) for x in [0, W-2]
-//   edges[1, y, x] = vertical   edge between (y,x) and (y+1,x) for y in [0, H-2]
-// Values: 1.0 for connect (same superpixel), 0.0 for cut (superpixel boundary)
-torch::Tensor slic_edge_costs(
-    const cv::Mat& input,
-    int region_size = 10,
-    float ruler = 0.0f,
-    int iters = 10,
-    int slic_algorithm = cv::ximgproc::SLIC
-) {
+namespace {
+cv::Mat to_bgr_f32_or_throw(const cv::Mat& input) {
     if (input.empty()) throw std::runtime_error("slic_edge_costs: input image is empty");
 
-    // SLIC expects 3-channel input; drop alpha if present.
     cv::Mat img_bgr;
     if (input.channels() == 1) {
         cv::cvtColor(input, img_bgr, cv::COLOR_GRAY2BGR);
@@ -27,7 +16,6 @@ torch::Tensor slic_edge_costs(
         throw std::runtime_error("slic_edge_costs: unsupported channel count");
     }
 
-    // Convert to float32 for SLIC.
     cv::Mat img;
     if (img_bgr.depth() == CV_8U) {
         img_bgr.convertTo(img, CV_32FC3, 1.0 / 255.0);
@@ -44,11 +32,22 @@ torch::Tensor slic_edge_costs(
     }
 
     if (!img.isContinuous()) img = img.clone();
+    return img;
+}
+} // namespace
+
+torch::Tensor slic_edge_costs(
+    const cv::Mat& input,
+    int region_size,
+    float ruler,
+    int iters,
+    int slic_algorithm
+) {
+    cv::Mat img = to_bgr_f32_or_throw(input);
 
     const int H = img.rows;
     const int W = img.cols;
 
-    // Run SLIC superpixels
     auto sp = cv::ximgproc::createSuperpixelSLIC(img, slic_algorithm, region_size, ruler);
     sp->iterate(iters);
     sp->enforceLabelConnectivity();
@@ -56,7 +55,6 @@ torch::Tensor slic_edge_costs(
     cv::Mat labels; // CV_32S, HxW
     sp->getLabels(labels);
 
-    // Create edge tensor: [2, H, W]
     auto edges = torch::zeros({2, H, W}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU));
     float* e = edges.data_ptr<float>();
     const int64_t plane = static_cast<int64_t>(H) * static_cast<int64_t>(W);

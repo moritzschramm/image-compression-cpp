@@ -7,10 +7,10 @@
 #include <vector>
 #include "image_loader.h"
 #include "configuration.h"
-#include "slic_edge.hpp"
-#include "canny_edge.hpp"
-#include "graph_based_edge.hpp"
-#include "watershed_edge.hpp"
+#include "slic_edge.h"
+#include "canny_edge.h"
+#include "graph_based_edge.h"
+#include "watershed_edge.h"
 
 // Target layout (C,H,W):
 // 0: cost_right   (learned)  {0,1} where 1 = connect

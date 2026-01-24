@@ -1,7 +1,8 @@
-#include <torch/torch.h>
-#include <opencv2/opencv.hpp>
+#include "canny_edge.h"
+#include <stdexcept>
 
-static inline cv::Mat to_gray_u8_any(const cv::Mat& img_any) {
+namespace {
+cv::Mat to_gray_u8_any(const cv::Mat& img_any) {
     CV_Assert(!img_any.empty());
 
     cv::Mat gray;
@@ -46,19 +47,16 @@ static inline cv::Mat to_gray_u8_any(const cv::Mat& img_any) {
     if (!gray_u8.isContinuous()) gray_u8 = gray_u8.clone();
     return gray_u8;
 }
+} // namespace
 
-// Output: edges [2, H, W] (float32, CPU)
-//   edges[0, y, x] = horizontal edge between (y,x) and (y,x+1) for x in [0, W-2]
-//   edges[1, y, x] = vertical   edge between (y,x) and (y+1,x) for y in [0, H-2]
-// Values: 1.0 for connect (no edge), 0.0 for cut (edge present)
-inline torch::Tensor canny_edge_costs(
+torch::Tensor canny_edge_costs(
     const cv::Mat& img,
-    double canny_low = 50.0,
-    double canny_high = 150.0,
-    int aperture_size = 3,
-    bool L2gradient = true,
-    int blur_ksize = 3,          // set 0 or 1 to disable blur
-    double blur_sigma = 1.0
+    double canny_low,
+    double canny_high,
+    int aperture_size,
+    bool L2gradient,
+    int blur_ksize,
+    double blur_sigma
 ) {
     cv::Mat gray = to_gray_u8_any(img);
     const int H = gray.rows;
@@ -68,25 +66,24 @@ inline torch::Tensor canny_edge_costs(
         cv::GaussianBlur(gray, gray, cv::Size(blur_ksize, blur_ksize), blur_sigma);
     }
 
-    cv::Mat edges; // CV_8U, values {0,255}; Canny edges are typically 1-pixel wide
+    cv::Mat edges; // CV_8U, values {0,255}
     cv::Canny(gray, edges, canny_low, canny_high, aperture_size, L2gradient);
 
-    // Output tensor: float32 values {0,1}
     auto out = torch::zeros({2, H, W},
                             torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU).requires_grad(false));
     auto acc = out.accessor<float, 3>();
 
-    // Horizontal edges: between (y,x) and (y,x+1) -> store at (y,x) in channel 0
+    // Horizontal edges: between (y,x) and (y,x+1)
     for (int y = 0; y < H; ++y) {
         const uint8_t* e = edges.ptr<uint8_t>(y);
         for (int x = 0; x < W - 1; ++x) {
             const bool is_edge = (e[x] != 0) || (e[x + 1] != 0);
             acc[0][y][x] = is_edge ? 0.0f : 1.0f;
         }
-        // acc[0][y][W-1] stays 0 (ignored)
+        // last column remains 0 (ignored)
     }
 
-    // Vertical edges: between (y,x) and (y+1,x) -> store at (y,x) in channel 1
+    // Vertical edges: between (y,x) and (y+1,x)
     for (int y = 0; y < H - 1; ++y) {
         const uint8_t* e0 = edges.ptr<uint8_t>(y);
         const uint8_t* e1 = edges.ptr<uint8_t>(y + 1);
@@ -95,7 +92,7 @@ inline torch::Tensor canny_edge_costs(
             acc[1][y][x] = is_edge ? 0.0f : 1.0f;
         }
     }
-    // acc[1][H-1][x] stays 0 (ignored)
+    // last row remains 0 (ignored)
 
     return out;
 }

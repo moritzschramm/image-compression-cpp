@@ -1,9 +1,8 @@
-#pragma once
-#include <torch/torch.h>
-#include <opencv2/opencv.hpp>
-#include <opencv2/imgproc.hpp>
+#include "watershed_edge.h"
+#include <stdexcept>
 
-static inline cv::Mat to_bgr_u8_or_throw_ws(const cv::Mat& img_any) {
+namespace {
+cv::Mat to_bgr_u8_or_throw_ws(const cv::Mat& img_any) {
     CV_Assert(!img_any.empty());
     CV_Assert(img_any.channels() == 1 || img_any.channels() == 3 || img_any.channels() == 4);
 
@@ -40,16 +39,13 @@ static inline cv::Mat to_bgr_u8_or_throw_ws(const cv::Mat& img_any) {
     if (!img_u8.isContinuous()) img_u8 = img_u8.clone();
     return img_u8;
 }
+} // namespace
 
-// Output: edges [2, H, W] (float32, CPU)
-//   edges[0, y, x] = horizontal edge between (y,x) and (y,x+1) for x in [0, W-2]
-//   edges[1, y, x] = vertical   edge between (y,x) and (y+1,x) for y in [0, H-2]
-// Values: 1.0 for connect (same segment), 0.0 for cut (segment boundary)
-inline torch::Tensor watershed_edge_costs(
+torch::Tensor watershed_edge_costs(
     const cv::Mat& input,
-    int seed_stride = 16,
-    int blur_ksize = 3,
-    double blur_sigma = 1.0
+    int seed_stride,
+    int blur_ksize,
+    double blur_sigma
 ) {
     CV_Assert(seed_stride >= 2);
 
