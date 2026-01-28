@@ -45,3 +45,10 @@ For this, the costs for the multicut solver are sampled from probability distrib
 ## Multicut
 
 This project uses [RAMA](https://github.com/pawelswoboda/RAMA) which solves the Multicut Problem on the GPU.
+
+## Future Work
+
+To make the project work, there are a few improvments necessary:
+ - Fix the oversegmentation of the pre-trained model. The recall of predicted "cut" edges looks good (>0.9), but the precision is bad (<0.25). This leads to oversegmentation which the subsequent RL training can't work with.
+ - Implement actor-critic RL pattern. Right now, the RL training is a primitive stateless REINFORCE adaptation, which does not converge.
+ - Use different image format. At the moment, PNG is used to encode the images. Since the whole pipeline runs on the GPU, a custom PNG file size estimator had to be generated. To encode images directly on the GPU, one could use ``nvJPEG2k` (or ``nvPNG`, if it is released by then).
